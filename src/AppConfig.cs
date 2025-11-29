@@ -1,0 +1,1 @@
+public record AppConfig(string KeyId, string IssuerId, string PrivateKeyFilePath);
