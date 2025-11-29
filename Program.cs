@@ -2,6 +2,21 @@
 using AppStoreConnect.Net.Api;
 using AppStoreConnect.Net.Client;
 
+var commands = new CommandsCollection()
+{
+    new Command_List(),
+};
+
+if (commands.TryPrintHelp(args))
+    return;
+
+var command = commands.FirstOrDefault(c => c.IsMatches(args));
+if (command is null)
+{
+    Console.WriteLine("no command fount for passed parameters");
+    return;
+}
+
 var configPath = "../config.json";
 if (!File.Exists(configPath))
 {
@@ -33,9 +48,8 @@ var config = new AppStoreConnectConfiguration(
     privateKeyContent
 );
 
+command.Initialize(config, args);
+await command.ExecuteAsync();
 
-// -------------
-
-var api = new InAppPurchasesApi(config);
-
+Console.WriteLine("done.");
 
