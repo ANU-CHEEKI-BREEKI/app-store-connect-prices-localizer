@@ -4,6 +4,12 @@
     <ProjectReference Include="..\..\AppStoreConnectNet-main\generated\src\AppStoreConnect.Net\AppStoreConnect.Net.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="configs\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
