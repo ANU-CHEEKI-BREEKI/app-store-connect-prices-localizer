@@ -33,9 +33,34 @@ public class Command_Localize : CommandBase
             territories = new() { new StoreTerritory("BGR", "") };
             //DELETE THIS
 
-            foreach (var iap in iapsData)
-                await LocalizeIap(iap, baseTerritory, basePrices, localPercentages, territories);
 
+
+            // var lister = new Command_List();
+            // lister.Initialize(ApiConfig, GlobalConfig, Args);
+            // var prices = await lister.GetIapPrices(iaps.Data[0], verbose: v);
+            // foreach (var pr in prices)
+            //     Console.WriteLine($"{pr.Key} : {pr.Value.Attributes.CustomerPrice}");
+
+            return;
+
+
+
+
+
+            var pricesSetup = new List<IapPriceSetup>();
+
+            // foreach iap
+            // get all local prices
+            // multiply on scaler
+            // call 
+
+            // var lister = new Command_List();
+            // lister.Initialize(ApiConfig, GlobalConfig, Args);
+            // lister.GetIapPrice();
+
+            var restorer = new Command_Restore();
+            restorer.Initialize(ApiConfig, GlobalConfig, Args);
+            await restorer.SetPrices(pricesSetup, v);
         }
         catch (Exception ex)
         {
