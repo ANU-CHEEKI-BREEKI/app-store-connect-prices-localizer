@@ -33,10 +33,6 @@ public class Command_Localize : CommandBase
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
             var iapsData = iaps.Data;
 
-            //DELETE THIS
-            iapsData = new() { iaps.Data[0] };
-            //DELETE THIS
-
             // using to get local prices
             var listCommand = new Command_List();
             listCommand.Initialize(ApiConfig, GlobalConfig, Args);
