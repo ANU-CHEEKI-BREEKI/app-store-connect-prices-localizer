@@ -35,11 +35,12 @@ public class Command_Localize : CommandBase
 
 
 
-            // var lister = new Command_List();
-            // lister.Initialize(ApiConfig, GlobalConfig, Args);
-            // var prices = await lister.GetIapPrices(iaps.Data[0], verbose: v);
-            // foreach (var pr in prices)
-            //     Console.WriteLine($"{pr.Key} : {pr.Value.Attributes.CustomerPrice}");
+            var listCommand = new Command_List();
+            listCommand.Initialize(ApiConfig, GlobalConfig, Args);
+
+            var prices = await listCommand.GetAllLocalPricesAsync(iaps.Data[0]);
+            foreach (var pr in prices)
+                Console.WriteLine($"{pr.Key} : {pr.Value.Attributes.CustomerPrice}");
 
             return;
 
@@ -60,6 +61,7 @@ public class Command_Localize : CommandBase
 
             var restorer = new Command_Restore();
             restorer.Initialize(ApiConfig, GlobalConfig, Args);
+
             await restorer.SetPrices(pricesSetup, v);
         }
         catch (Exception ex)

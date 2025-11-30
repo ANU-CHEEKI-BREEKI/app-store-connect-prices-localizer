@@ -30,7 +30,7 @@ public class Command_List : CommandBase
                 Console.WriteLine($"   -> Fetching prices...");
 
                 foreach (var iap in iaps.Data)
-                    pricePoints[iap] = await PrintIapPrice(iap);
+                    pricePoints[iap] = await GetBasePrice(iap);
 
                 Console.WriteLine($"Customer Prices for {baseTerritory}:");
 
@@ -55,13 +55,14 @@ public class Command_List : CommandBase
     public override void PrintHelp()
     {
         Console.WriteLine("list");
-        Console.WriteLine("    usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [-v] [-p]");
+        Console.WriteLine("    usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [-v] [-p] [-l]");
         Console.WriteLine("    list all IAP in project (NOT subscriptions)");
         Console.WriteLine("    -p  print base prices");
+        Console.WriteLine("    -p  print localized prices");
         Console.WriteLine("    -v  verbose logs");
     }
 
-    private async Task<InAppPurchasePricePoint?> PrintIapPrice(InAppPurchaseV2 iap)
+    private async Task<InAppPurchasePricePoint?> GetBasePrice(InAppPurchaseV2 iap)
     {
         var v = Args.HasFlag("-v");
 
@@ -126,133 +127,100 @@ public class Command_List : CommandBase
         return null;
     }
 
+    public async Task<Dictionary<string, InAppPurchasePricePoint>> GetAllLocalPricesAsync(InAppPurchaseV2 iap)
+    {
+        var results = new Dictionary<string, InAppPurchasePricePoint>();
+        var iapApi = new InAppPurchasesApi(ApiConfig);
+        var pointsApi = new InAppPurchasePricePointsApi(ApiConfig);
 
-    // public async Task<Dictionary<string, string>> GetAllLocalPricesAsync(InAppPurchaseV2 iap)
-    // {
-    //     var results = new Dictionary<string, string>(); // TerritoryCode -> CustomerPrice
-    //     var iapApi = new InAppPurchasesApi(ApiConfig);
-    //     var schedulesApi = new InAppPurchasePriceSchedulesApi(ApiConfig);
-    //     var pointsApi = new InAppPurchasePricePointsApi(ApiConfig); // <--- Новий API для точок
+        Console.WriteLine($"Getting full price list for {iap.Attributes.Name}...");
 
-    //     Console.WriteLine($"Getting full price list for {iap.Attributes.Name}...");
+        var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(
+            iap.Id,
+            include: new List<string> { "manualPrices", "automaticPrices", "baseTerritory" }
+        );
 
-    //     // 1. Отримуємо Розклад + Manual Prices + Automatic Prices
-    //     var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(
-    //         iap.Id,
-    //         include: new List<string> { "manualPrices", "automaticPrices", "automaticPrices.inAppPurchasePricePoint" }
-    //     );
+        if (scheduleResponse.Data == null)
+        {
+            Console.WriteLine("Error: Schedule Data is null.");
+            return results;
+        }
 
-    //     if (scheduleResponse.Data == null) return results;
+        var schedule = scheduleResponse.Data;
 
-    //     var scheduleId = scheduleResponse.Data.Id;
+        var manualResponse = await new InAppPurchasePriceSchedulesApi(ApiConfig).InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
+            schedule.Id,
+            include: new List<string> { "inAppPurchasePricePoint", "territory" },
+            limit: 200
+        );
 
-    //     // --- КРОК 1: Збираємо Manual Prices (Винятки) ---
-    //     // Нам треба знати територію для кожного manual price
-    //     var manualResponse = await schedulesApi.InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
-    //         scheduleId,
-    //         include: new List<string> { "inAppPurchasePricePoint", "territory" },
-    //         limit: 200
-    //     );
+        var manualPricesMap = ParsePricesWithTerritory(manualResponse);
+        foreach (var kvp in manualPricesMap)
+            results[kvp.Key] = kvp.Value;
 
-    //     var manualPricesMap = ParsePricesWithTerritory(manualResponse);
+        Console.WriteLine($"Loaded {results.Count} manual overrides.");
 
-    //     // Додаємо ручні ціни в результат
-    //     foreach (var kvp in manualPricesMap)
-    //     {
-    //         results[kvp.Key] = kvp.Value; // Key=TerritoryCode, Value=Price
-    //     }
 
-    //     Console.WriteLine($"Loaded {results.Count} manual overrides.");
+        string? basePricePointId = (await GetBasePrice(iap)).Id;
 
-    //     // --- КРОК 2: Знаходимо Базову Ціну для Автоматики ---
-    //     string? basePricePointId = null;
+        if (basePricePointId == null)
+        {
+            Console.WriteLine("Warning: Could not determine Base Price Point ID. Cannot fetch equalizations.");
+            return results;
+        }
 
-    //     // Шукаємо в included
-    //     if (scheduleResponse.Included != null)
-    //     {
-    //         var autoPrice = scheduleResponse.Included
-    //             .Select(x => x.ActualInstance)
-    //             .OfType<InAppPurchasePrice>()
-    //             .FirstOrDefault(p => p.Type == InAppPurchasePrice.TypeEnum.InAppPurchasePrices); // Це саме об'єкт ціни, не точки
+        Console.WriteLine($"Fetching equalizations (world prices) for Point ID: {basePricePointId}...");
 
-    //         if (autoPrice != null && autoPrice.Relationships?.InAppPurchasePricePoint?.Data != null)
-    //         {
-    //             basePricePointId = autoPrice.Relationships.InAppPurchasePricePoint.Data.Id;
-    //         }
-    //     }
+        try
+        {
+            var equalizationsResponse = await pointsApi.InAppPurchasePricePointsEqualizationsGetToManyRelatedAsync(
+                basePricePointId,
+                include: new List<string> { "territory" },
+                limit: 200
+            );
 
-    //     if (basePricePointId == null)
-    //     {
-    //         Console.WriteLine("Warning: No base automatic price found.");
-    //         return results;
-    //     }
+            if (equalizationsResponse.Data != null && equalizationsResponse.Included != null)
+            {
+                foreach (var pricePoint in equalizationsResponse.Data)
+                {
+                    var territoryId = pricePoint.Relationships?.Territory?.Data?.Id;
+                    var price = pricePoint.Attributes.CustomerPrice;
 
-    //     // --- КРОК 3: Завантажуємо Еквіваленти (Equalizations) ---
-    //     // Це дасть нам ціни для ВСІХ інших країн, які відповідають цьому Tier
-    //     Console.WriteLine($"Fetching equalizations for Base Price Point ID: {basePricePointId}...");
+                    if (territoryId != null)
+                    {
+                        if (!results.ContainsKey(territoryId))
+                            results[territoryId] = pricePoint;
+                    }
+                }
+                Console.WriteLine($"Added {equalizationsResponse.Data.Count} automatic prices.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching equalizations: {ex.Message}");
+        }
 
-    //     var equalizationsResponse = await pointsApi.InAppPurchasePricePointsEqualizationsGetToManyRelatedAsync(
-    //         basePricePointId,
-    //         include: new List<string> { "territory" }, // Обов'язково включаємо територію, щоб знати код країни
-    //         limit: 200 // Завантажить до 200 країн (цього достатньо для світу)
-    //     );
+        return results;
+    }
 
-    //     // Парсимо відповідь еквалайзерів
-    //     // (Логіка парсингу така ж, як і для Manual Prices: є список PricePoints і список Territories в Included)
+    private Dictionary<string, InAppPurchasePricePoint> ParsePricesWithTerritory(InAppPurchasePricesResponse response)
+    {
+        var res = new Dictionary<string, InAppPurchasePricePoint>();
+        if (response.Data == null || response.Included == null) return res;
 
-    //     // 1. Словник територій з Included: ID -> Code (напр. "id-usa" -> "USA")
-    //     var territoriesMap = equalizationsResponse.Included?
-    //         .Select(x => x.ActualInstance)
-    //         .OfType<Territory>()
-    //         .ToDictionary(t => t.Id, t => t.Id); // У Territory ID співпадає з кодом (USA = USA), але краще брати з об'єкта
+        var pointsMap = response.Included
+            .Select(x => x.ActualInstance)
+            .OfType<InAppPurchasePricePoint>()
+            .ToDictionary(p => p.Id);
 
-    //     // 2. Проходимо по списку Price Points (Data)
-    //     if (equalizationsResponse.Data != null && territoriesMap != null)
-    //     {
-    //         foreach (var pricePoint in equalizationsResponse.Data)
-    //         {
-    //             // У pricePoint має бути зв'язок з територією
-    //             if (pricePoint.Relationships?.Territory?.Data != null)
-    //             {
-    //                 var territoryId = pricePoint.Relationships.Territory.Data.Id;
-    //                 var price = pricePoint.Attributes.CustomerPrice;
+        foreach (var entry in response.Data)
+        {
+            var territoryId = entry.Relationships?.Territory?.Data?.Id;
+            var pointId = entry.Relationships?.InAppPurchasePricePoint?.Data?.Id;
 
-    //                 // ДОДАЄМО ТІЛЬКИ ЯКЩО НЕМАЄ РУЧНОЇ ЦІНИ
-    //                 // (Manual override має пріоритет)
-    //                 if (!results.ContainsKey(territoryId))
-    //                 {
-    //                     results[territoryId] = price;
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     return results;
-    // }
-
-    // // Допоміжний метод для парсингу відповідей, де є Price + Included Territory + Included PricePoint
-    // private Dictionary<string, string> ParsePricesWithTerritory(InAppPurchasePricesResponse response)
-    // {
-    //     var res = new Dictionary<string, string>();
-    //     if (response.Data == null || response.Included == null) return res;
-
-    //     // 1. Знаходимо самі цифри цін (PricePoints)
-    //     var pointsMap = response.Included
-    //         .Select(x => x.ActualInstance)
-    //         .OfType<InAppPurchasePricePoint>()
-    //         .ToDictionary(p => p.Id);
-
-    //     // 2. Проходимо по зв'язках (Price Entries)
-    //     foreach (var entry in response.Data)
-    //     {
-    //         var territoryId = entry.Relationships?.Territory?.Data?.Id;
-    //         var pointId = entry.Relationships?.InAppPurchasePricePoint?.Data?.Id;
-
-    //         if (territoryId != null && pointId != null && pointsMap.TryGetValue(pointId, out var point))
-    //         {
-    //             res[territoryId] = point.Attributes.CustomerPrice;
-    //         }
-    //     }
-    //     return res;
-    // }
+            if (territoryId != null && pointId != null && pointsMap.TryGetValue(pointId, out var point))
+                res[territoryId] = point;
+        }
+        return res;
+    }
 }
