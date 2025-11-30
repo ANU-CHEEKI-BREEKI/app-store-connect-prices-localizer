@@ -24,14 +24,19 @@ public class Command_Localize : CommandBase
             // restore prices first
             var restorer = new Command_Restore();
             restorer.Initialize(ApiConfig, GlobalConfig, Args);
-            await restorer.RestorePrices(appId, baseTerritory, basePrices, v);
+            // i dont want to bother to pass arguments here
+            // lets just execute as command
+            await restorer.ExecuteAsync();
 
             Console.WriteLine("   -> Localizing IAPs...");
             Console.WriteLine("   -> Receiving IAP list...");
 
             var appApi = new AppsApi(ApiConfig);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
-            var iapsData = iaps.Data;
+
+            var singeIap = Args.GetParameter("--iap", "");
+            if (!string.IsNullOrEmpty(singeIap))
+                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
 
             // using to get local prices
             var listCommand = new Command_List();
@@ -39,7 +44,7 @@ public class Command_Localize : CommandBase
 
             var pricesSetup = new List<IapPriceSetup>();
 
-            foreach (var item in iapsData)
+            foreach (var item in iaps.Data)
                 await LocalizePrises(item, listCommand, pricesSetup, localPercentages, v);
 
             await restorer.SetPrices(pricesSetup, v);
@@ -73,25 +78,28 @@ public class Command_Localize : CommandBase
             var newPrice = double.Parse(
                 pr.Value.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture
             ) * multiplier;
+
+            // make more like marketing price 5.00 -> 4.99 and hope it will be rounded as price point 4.99
+            newPrice -= 0.01;
+
             priceSetup.LocalPrices[pr.Value.TerritoryCode] = newPrice;
 
             if (v)
-            {
-                Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}...");
-                Console.WriteLine($"{pr.Value.PricePoint.Attributes.CustomerPrice} * {multiplier} = {newPrice:##.00}");
-            }
+                Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {pr.Value.PricePoint.Attributes.CustomerPrice,10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
         }
     }
 
     public override void PrintHelp()
     {
         Console.WriteLine("localize");
-        Console.WriteLine("    usage: localize [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--local-percentages {local-percentages.json}] [-v]");
+        Console.WriteLine("    usage: localize [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--local-percentages {local-percentages.json}] [--iap {iap-product-id}] [-v]");
         Console.WriteLine("    for each iap (NOT subscriptions) set local prices as percentage of base territory price");
         Console.WriteLine("    --default-prices  path to json with default prices for base territory");
         Console.WriteLine("        used to run 'restore' command internally to reset all prices and get valid localized prices as 100% from base price");
         Console.WriteLine("    --local-percentages  path to json with percentages for each country");
         Console.WriteLine("        will set local prices as basePrice * percentage");
+        Console.WriteLine("    --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)");
+        Console.WriteLine("        get prices for only one iap product (to not spam your console with data)");
     }
 
     public record StoreTerritory(string Code, string Currency);

@@ -21,20 +21,17 @@ public class Command_Restore : CommandBase
 {
     public override string CommandName => "restore";
 
-    protected override async Task InternalExecuteAsync() => await ExecuteAsync(
+    protected override async Task InternalExecuteAsync() => await RestorePrices(
         CommandLinesUtils.GetParameter(Args, "--app-id", GlobalConfig.appId),
         Args.GetParameter("--base-territory", GlobalConfig.baseTerritory),
         (await Args.LoadJson<IapBasePrices>("--default-prices", GlobalConfig.iapBasePricesConfigPath)) ?? new(),
         Args.IsVerbose()
     );
 
-    public Task ExecuteAsync(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
-        => RestorePrices(appId, baseTerritory, basePrices, verbose);
-
     /// <summary>
     /// set default prices
     /// </summary>
-    public async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
+    private async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
     {
         try
         {
@@ -42,11 +39,14 @@ public class Command_Restore : CommandBase
             Console.WriteLine("   -> Receiving IAP list...");
             var appApi = new AppsApi(ApiConfig);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
-            var iapsData = iaps.Data;
+
+            var singeIap = Args.GetParameter("--iap", "");
+            if (!string.IsNullOrEmpty(singeIap))
+                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
 
             // for each iap on server - just set default price
             var iapPrices = new List<IapPriceSetup>();
-            foreach (var iap in iapsData)
+            foreach (var iap in iaps.Data)
             {
                 if (!basePrices.TryGetValue(iap.Attributes.ProductId, out var basePrice))
                     continue;
@@ -88,8 +88,10 @@ public class Command_Restore : CommandBase
     public override void PrintHelp()
     {
         Console.WriteLine("restore");
-        Console.WriteLine("    usage: restore [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [-v]");
+        Console.WriteLine("    usage: restore [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--iap {iap-product-id}] [-v]");
         Console.WriteLine("    for each iap (NOT subscriptions) set base territory price (app store should recalculate ALL local prices based on 100% base price)");
+        Console.WriteLine("    --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)");
+        Console.WriteLine("        get prices for only one iap product (to not spam your console with data)");
     }
 
     private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
