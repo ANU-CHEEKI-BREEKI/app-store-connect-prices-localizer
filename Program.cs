@@ -17,17 +17,7 @@ if (command is null)
     return;
 }
 
-var configPath = "../config.json";
-if (!File.Exists(configPath))
-{
-    Console.WriteLine($"Error: {configPath} file not found.");
-    return;
-}
-
-string jsonString = await File.ReadAllTextAsync(configPath);
-var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-var appSettings = JsonSerializer.Deserialize<AppConfig>(jsonString, options);
-
+var appSettings = await CommandLinesUtils.LoadJson<Credentials>(args, false, "--credentials", "../config.json");
 if (appSettings is null)
 {
     Console.WriteLine("Error: Failed to deserialize configuration from JSON.");
@@ -41,14 +31,15 @@ if (!File.Exists(appSettings.PrivateKeyFilePath))
 }
 
 var privateKeyContent = await File.ReadAllTextAsync(appSettings.PrivateKeyFilePath);
-
 var config = new AppStoreConnectConfiguration(
     appSettings.KeyId,
     appSettings.IssuerId,
     privateKeyContent
 );
 
-command.Initialize(config, args);
+var globalConfig = await CommandLinesUtils.LoadJson<GlobalConfig>(args, false, "--global-config", "../global-config.json");
+
+command.Initialize(config, globalConfig, args);
 await command.ExecuteAsync();
 
 Console.WriteLine("done.");

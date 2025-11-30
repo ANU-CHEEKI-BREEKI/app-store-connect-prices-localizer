@@ -9,24 +9,29 @@ public class Command_List : CommandBase
     {
         try
         {
-            var printLocalPrices = Args.Contains("-l");
+            var v = Args.HasFlag("-v");
 
             Console.WriteLine("receiving IAP list...");
 
-            var appId = Args[Array.IndexOf(Args, "--app-id") + 1];
-            var appApi = new AppsApi(Config);
+            var appId = CommandLinesUtils.GetParameter(Args, "--app-id", GlobalConfig.appId);
+            var appApi = new AppsApi(ApiConfig);
 
+            var pricePoints = new Dictionary<InAppPurchaseV2, InAppPurchasePricePoint?>();
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
 
-            await PrintIapPrice(iaps.Data[0]);
+            Console.WriteLine($"   -> Fetching prices...");
 
-            // foreach (var iap in iaps.Data)
-            // {
-            //     Console.WriteLine($"IAP Name: {iap.Attributes.Name}");
-            //     Console.WriteLine($"Product ID: {iap.Attributes.ProductId}");
-            //     Console.WriteLine($"Status: {iap.Attributes.State}");
-            //     Console.WriteLine($"Status: {iap.Attributes.ContentHosting}");
-            // }
+            foreach (var iap in iaps.Data)
+                pricePoints[iap] = await PrintIapPrice(iap);
+
+            var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory) ?? "USA";
+            Console.WriteLine($"Customer Prices for {baseTerritory}:");
+
+            foreach (var iap in iaps.Data)
+            {
+                var price = pricePoints[iap];
+                Console.WriteLine($"{iap.Attributes.ProductId}: {price?.Attributes?.CustomerPrice}");
+            }
         }
         catch (Exception ex)
         {
@@ -34,38 +39,45 @@ public class Command_List : CommandBase
         }
     }
 
-    public override bool IsMatches(string[] args) => args.Contains("--list");
+    public override bool IsMatches(string[] args) => args.Begins("list");
     public override void PrintHelp()
     {
         Console.WriteLine("list");
-        Console.WriteLine("    usage: --list --app-id <your app id> [-l]");
+        Console.WriteLine("    usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [-v]");
         Console.WriteLine("    list all IAP in project (NOT subscriptions)");
-        Console.WriteLine("    -l  print local prices");
     }
 
-    private async Task PrintIapPrice(InAppPurchaseV2 iap)
+    private async Task<InAppPurchasePricePoint?> PrintIapPrice(InAppPurchaseV2 iap)
     {
-        var iapApi = new InAppPurchasesApi(Config);
-        Console.WriteLine($"Getting price for {iap.Attributes.Name}...");
+        var v = Args.HasFlag("-v");
+
+        if (v)
+            Console.WriteLine($"   -> Fetching prices for: {iap.Attributes.Name}...");
+
+        var iapApi = new InAppPurchasesApi(ApiConfig);
+        var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory) ?? "USA";
+
         var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(iap.Id);
 
         if (scheduleResponse.Data == null)
         {
-            Console.WriteLine("   -> No price schedule found.");
-            return;
+            if (v)
+                Console.WriteLine("   -> No price schedule found.");
+            return null;
         }
 
         var scheduleId = scheduleResponse.Data.Id;
 
-        var schedulesApi = new InAppPurchasePriceSchedulesApi(Config);
+        var schedulesApi = new InAppPurchasePriceSchedulesApi(ApiConfig);
 
-        Console.WriteLine($"   -> Fetching prices for Schedule ID: {scheduleId}...");
+        if (v)
+            Console.WriteLine($"   -> Fetching prices for Schedule ID: {scheduleId}...");
 
         try
         {
             var pricesResponse = await schedulesApi.InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
                 scheduleId,
-                filterTerritory: new List<string> { "USA" },
+                filterTerritory: new List<string> { baseTerritory },
                 include: new List<string> { "inAppPurchasePricePoint" }
             );
 
@@ -75,20 +87,28 @@ public class Command_List : CommandBase
                 {
                     if (item.ActualInstance is InAppPurchasePricePoint pricePoint)
                     {
-                        var price = pricePoint.Attributes.CustomerPrice;
-                        var proceeds = pricePoint.Attributes.Proceeds;
+                        if (v)
+                        {
+                            var price = pricePoint.Attributes.CustomerPrice;
+                            var proceeds = pricePoint.Attributes.Proceeds;
+                            Console.WriteLine($"   -> Price ({baseTerritory}): {price} (Proceeds: {proceeds})");
+                        }
 
-                        Console.WriteLine($"   -> Price (USA): {price} (Proceeds: {proceeds})");
+                        return pricePoint;
                     }
                 }
             }
 
-            if (pricesResponse.Data.Count == 0)
-                Console.WriteLine("   -> Price not set manually (might be Free).");
+            if (v)
+                if (pricesResponse.Data.Count == 0)
+                    Console.WriteLine("   -> Price not set manually (might be Free).");
         }
         catch (ApiException ex)
         {
-            Console.WriteLine($"   -> Price Fetch Error: {ex.Message}");
+            if (v)
+                Console.WriteLine($"   -> Price Fetch Error: {ex.Message}");
         }
+
+        return null;
     }
 }
