@@ -4,6 +4,7 @@ var commands = new CommandsCollection()
 {
     new Command_List(),
     new Command_Localize(),
+    new Command_Restore(),
 };
 
 if (commands.TryPrintHelp(args))

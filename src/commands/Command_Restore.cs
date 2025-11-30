@@ -3,39 +3,79 @@ using AppStoreConnect.Net.Api;
 using AppStoreConnect.Net.Client;
 using AppStoreConnect.Net.Model;
 
-// FIXME: delete
-// { DELETE THIS }
-
-public class Command_Localize : CommandBase
+public class IapPriceSetup
 {
-    public override string CommandName => "localize";
+    /// <summary>
+    /// whole class here to not be confused what is iap id, product id, product name, etc
+    /// get InAppPurchaseV2 instances from AppStoreConnect Api
+    /// </summary>
+    public InAppPurchaseV2 Iap;
+    public double BasePrice;
+    public string BaseTerritoryCode;
+    public PricePerTerritory LocalPrices = new();
+}
 
-    protected override async Task InternalExecuteAsync()
+public class PricePerTerritory : Dictionary<string, double> { }
+
+public class Command_Restore : CommandBase
+{
+    public override string CommandName => "restore";
+
+    protected override async Task InternalExecuteAsync() => await ExecuteAsync(
+        CommandLinesUtils.GetParameter(Args, "--app-id", GlobalConfig.appId),
+        Args.GetParameter("--base-territory", GlobalConfig.baseTerritory),
+        (await Args.LoadJson<IapBasePrices>("--default-prices", GlobalConfig.iapBasePricesConfigPath)) ?? new(),
+        Args.IsVerbose()
+    );
+
+    public Task ExecuteAsync(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
+        => RestorePrices(appId, baseTerritory, basePrices, verbose);
+
+    /// <summary>
+    /// set default prices
+    /// </summary>
+    public async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
     {
         try
         {
-            var v = Args.HasFlag("-v");
-
-            var appId = CommandLinesUtils.GetParameter(Args, "--app-id", GlobalConfig.appId);
-            var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory);
-            var basePrices = await Args.LoadJson<IapBasePrices>("--default-prices", GlobalConfig.iapBasePricesConfigPath) ?? new();
-            var localPercentages = await Args.LoadJson<IapLocalizedPercentages>("--local-percentages", GlobalConfig.localPricesPercentagesConfigPath) ?? new();
-
-            var territories = await GetAllTerritoriesAsync();
-
             Console.WriteLine("receiving IAP list...");
             var appApi = new AppsApi(ApiConfig);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
             var iapsData = iaps.Data;
 
-            //DELETE THIS
-            iapsData = new() { iaps.Data[0] };
-            territories = new() { new StoreTerritory("BGR", "") };
-            //DELETE THIS
-
+            // for each iap on server - just set default price
+            var iapPrices = new List<IapPriceSetup>();
             foreach (var iap in iapsData)
-                await LocalizeIap(iap, baseTerritory, basePrices, localPercentages, territories);
+            {
+                if (!basePrices.TryGetValue(iap.Attributes.ProductId, out var basePrice))
+                    continue;
 
+                iapPrices.Add(new IapPriceSetup
+                {
+                    Iap = iap,
+                    BasePrice = basePrice,
+                    BaseTerritoryCode = baseTerritory,
+                });
+            }
+
+            await SetPrices(iapPrices, verbose);
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    /// <summary>
+    /// Set concrete prices
+    /// </summary>
+    public async Task SetPrices(List<IapPriceSetup> iapPrices, bool verbose)
+    {
+        try
+        {
+            foreach (var iap in iapPrices)
+                await SetPrices(iap, verbose);
         }
         catch (Exception ex)
         {
@@ -45,65 +85,33 @@ public class Command_Localize : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("localize");
-        Console.WriteLine("    usage: localize [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--local-percentages.json] [-v]");
-        Console.WriteLine("    for each iap (NOT subscriptions) set local prices as percentage of base territory price");
+        Console.WriteLine("restore");
+        Console.WriteLine("    usage: restore [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [-v]");
+        Console.WriteLine("    for each iap (NOT subscriptions) set base territory price (app store should recalculate ALL local prices based on 100% base price)");
     }
 
-    public record StoreTerritory(string Code, string Currency);
-
-    //TODO: move to separate command Command_ListTerritories
-    public async Task<List<StoreTerritory>> GetAllTerritoriesAsync()
+    private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
     {
-        var territoriesApi = new TerritoriesApi(ApiConfig);
-        var allCodes = new List<StoreTerritory>();
-
-        Console.WriteLine("loading supported territories ids...");
-
-        //FIXME: what if more that 200?
-        var response = await territoriesApi.TerritoriesGetCollectionAsync(limit: 200);
-
-        foreach (var territory in response.Data)
-        {
-            // territory.Id - territory code (for example "USA", "UKR", "JPN")
-            // territory.Attributes.Currency - currency code (for example "USD", "UAH", "JPY")
-
-            allCodes.Add(new StoreTerritory
-            (
-                territory.Id,
-                territory.Attributes.Currency
-            ));
-        }
-
-        return allCodes;
-    }
-
-    private async Task LocalizeIap(InAppPurchaseV2 iap, string baseTerritory, IapBasePrices basePrices, IapLocalizedPercentages localPercentages, List<StoreTerritory> territories)
-    {
-        Console.WriteLine($"localizing iap: {iap.Attributes.ProductId}.");
+        if (verbose)
+            Console.WriteLine($"Set iap price for: {iapSettings.Iap.Attributes.ProductId}.");
 
         var manualPrices = new List<InAppPurchasePriceScheduleCreateRequestIncludedInner>();
 
-        if (!basePrices.TryGetValue(iap.Attributes.ProductId, out var basePrice))
-        {
-            Console.WriteLine($"cant find base price for iap: {iap.Attributes.ProductId}. skipping.");
-            return;
-        }
-
-        var basePoint = await GetClosestPricePointId(iap, baseTerritory, basePrice);
+        var basePoint = await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
         manualPrices.Add(
             CreatePriceEntry(basePoint)
         );
 
-        foreach (var territory in territories)
+        foreach (var territory in iapSettings.LocalPrices)
         {
-            var territoryCode = territory.Code;
-            var multiplier = localPercentages.TryGetValue(territoryCode, out var percentage) ? percentage : 1;
+            // already set base price
+            if (territory.Key == iapSettings.BaseTerritoryCode)
+                continue;
 
-            Console.WriteLine($"Calculating price for {territoryCode} (Multiplier: {multiplier})...");
+            var territoryCode = territory.Key;
+            var targetPrice = territory.Value;
 
-            var targetPrice = basePrice * multiplier;
-            var localPoint = await GetClosestPricePointId(iap, territoryCode, targetPrice);
+            var localPoint = await GetClosestPricePointId(iapSettings.Iap, territoryCode, targetPrice, verbose);
 
             if (localPoint != null)
             {
@@ -111,60 +119,48 @@ public class Command_Localize : CommandBase
                     CreatePriceEntry(localPoint)
                 );
 
-                if (Args.IsVerbose())
-                    Console.WriteLine($" -> Set {territoryCode} to match ~{targetPrice}: CustomerPrice {localPoint?.Attributes?.CustomerPrice}");
+                if (verbose)
+                    Console.WriteLine($" -> Set {territoryCode} to CustomerPrice: {localPoint?.Attributes?.CustomerPrice}");
             }
         }
 
-        await PushNewSchedule(iap, baseTerritory, manualPrices);
+        await PushNewSchedule(iapSettings.Iap, iapSettings.BaseTerritoryCode, manualPrices, verbose);
     }
 
-    public async Task<InAppPurchasePricePoint?> GetClosestPricePointId(InAppPurchaseV2 iap, string territory, double targetPrice)
+    public async Task<InAppPurchasePricePoint?> GetClosestPricePointId(InAppPurchaseV2 iap, string territory, double targetPrice, bool verbose)
     {
         var iapApi = new InAppPurchasesApi(ApiConfig);
 
-        // Змінна для зберігання останньої перевіреної ціни (яка була < target)
-        // Вона потрібна, щоб порівняти "попередню" і "поточну" ціну
         InAppPurchasePricePoint? lastLowerPoint = null;
 
-        if (Args.IsVerbose())
+        if (verbose)
             Console.WriteLine($"Starting search for closest price to {targetPrice} in {territory}...");
 
-        // ========================================================================
-        // 1. Перша сторінка (через SDK)
-        // ========================================================================
         var response = await iapApi.InAppPurchasesV2PricePointsGetToManyRelatedAsync(
             iap.Id,
             filterTerritory: new List<string> { territory },
             limit: 200
         );
 
-        // Перевіряємо першу сторінку
         var result = FindBestInPage(response.Data, targetPrice, lastLowerPoint);
 
-        // Якщо знайшли ідеальний варіант (Result != null), повертаємо його
         if (result.FoundMatch != null)
         {
-            if (Args.IsVerbose())
+            if (verbose)
                 Console.WriteLine($"Found: {result.FoundMatch.Attributes.CustomerPrice} (ID: {result.FoundMatch.Id})");
             return result.FoundMatch;
         }
 
-        // Якщо не знайшли, запам'ятовуємо останню ціну цієї сторінки для наступної ітерації
         lastLowerPoint = result.LastSeen ?? lastLowerPoint;
 
-        // Отримуємо посилання далі
         var nextHref = response.Links?.Next;
         var page = 1;
 
-        // ========================================================================
-        // 2. Цикл пагінації
-        // ========================================================================
         while (!string.IsNullOrEmpty(nextHref))
         {
             page++;
 
-            if (Args.IsVerbose())
+            if (verbose)
                 Console.WriteLine($"Fetching Page {page}...");
 
             try
@@ -174,7 +170,6 @@ public class Command_Localize : CommandBase
 
                 var requestOptions = new RequestOptions();
 
-                // Вручну додаємо авторизацію для низькорівневого запиту
                 if (!string.IsNullOrEmpty(iapApi.Configuration.AccessToken))
                 {
                     requestOptions.HeaderParameters.Add("Authorization", "Bearer " + iapApi.Configuration.AccessToken);
@@ -190,12 +185,11 @@ public class Command_Localize : CommandBase
 
                 if (pageResponse?.Data != null)
                 {
-                    // Перевіряємо цю сторінку, передаючи останню ціну з попередньої
                     var pageResult = FindBestInPage(pageResponse.Data, targetPrice, lastLowerPoint);
 
                     if (pageResult.FoundMatch != null)
                     {
-                        if (Args.IsVerbose())
+                        if (verbose)
                             Console.WriteLine($"Found on Page {page}: {pageResult.FoundMatch.Attributes.CustomerPrice} (ID: {pageResult.FoundMatch.Id})");
                         return pageResult.FoundMatch;
                     }
@@ -207,28 +201,24 @@ public class Command_Localize : CommandBase
             }
             catch (Exception ex)
             {
-                if (Args.IsVerbose())
+                if (verbose)
                     Console.WriteLine($"Error fetching page {page}: {ex.Message}");
                 break;
             }
         }
 
-        // Якщо ми пройшли всі сторінки і не знайшли ціну >= target, 
-        // значить target вище за найдорожчу ціну в App Store.
-        // Повертаємо найдорожчу знайдену (lastLowerPoint).
         if (lastLowerPoint != null)
         {
-            if (Args.IsVerbose())
+            if (verbose)
                 Console.WriteLine($"Target price is higher than max available. Returning max: {lastLowerPoint.Attributes.CustomerPrice}");
             return lastLowerPoint;
         }
 
-        if (Args.IsVerbose())
+        if (verbose)
             Console.WriteLine("Search finished. No price found.");
         return null;
     }
 
-    // Допоміжний метод для пошуку всередині списку
     private (InAppPurchasePricePoint? FoundMatch, InAppPurchasePricePoint? LastSeen) FindBestInPage(
         List<InAppPurchasePricePoint> points,
         double target,
@@ -295,7 +285,7 @@ public class Command_Localize : CommandBase
         return new InAppPurchasePriceScheduleCreateRequestIncludedInner(priceInlineCreate);
     }
 
-    private async Task PushNewSchedule(InAppPurchaseV2 iap, string baseTerritoryId, List<InAppPurchasePriceScheduleCreateRequestIncludedInner> prices)
+    private async Task PushNewSchedule(InAppPurchaseV2 iap, string baseTerritoryId, List<InAppPurchasePriceScheduleCreateRequestIncludedInner> prices, bool verbose)
     {
         var schedulesApi = new InAppPurchasePriceSchedulesApi(ApiConfig);
 
@@ -322,7 +312,6 @@ public class Command_Localize : CommandBase
             )
         );
 
-        // 2. Фінальний запит
         var request = new InAppPurchasePriceScheduleCreateRequest(
             data: new InAppPurchasePriceScheduleCreateRequestData(
                 type: InAppPurchasePriceScheduleCreateRequestData.TypeEnum.InAppPurchasePriceSchedules,
@@ -331,13 +320,13 @@ public class Command_Localize : CommandBase
             included: prices
         );
 
-        Console.WriteLine("Sending Create Schedule Request...");
+        Console.WriteLine($"Sending Create Schedule Request for {iap.Attributes.ProductId} ...");
 
         try
         {
             var response = await schedulesApi.InAppPurchasePriceSchedulesCreateInstanceAsync(request);
 
-            if (Args.IsVerbose())
+            if (verbose)
             {
                 Console.WriteLine($"[SUCCESS] Schedule created successfully!");
                 Console.WriteLine($"   -> New Schedule ID: {response.Data.Id}");
