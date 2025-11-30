@@ -30,7 +30,7 @@ public class Command_List : CommandBase
 
             if (Args.HasFlag("-p"))
             {
-                var pricePoints = new Dictionary<InAppPurchaseV2, InAppPurchasePricePoint?>();
+                var pricePoints = new Dictionary<InAppPurchaseV2, InAppPriceData?>();
                 var localPricePoints = new Dictionary<InAppPurchaseV2, Dictionary<string, InAppPriceData>>();
 
                 Console.WriteLine($"   -> Fetching prices...");
@@ -48,13 +48,13 @@ public class Command_List : CommandBase
                 foreach (var iap in iaps.Data)
                 {
                     var price = pricePoints[iap];
-                    Console.WriteLine($"{iap.Attributes.ProductId}: {price?.Attributes?.CustomerPrice}");
+                    Console.WriteLine($"{price?.TerritoryCode,5} {price?.PricePoint?.Attributes?.CustomerPrice,10} {price?.Currency,5} {iap.Attributes.ProductId,5}");
 
                     if (Args.HasFlag("-l"))
                     {
                         var localPrices = localPricePoints[iap];
                         foreach (var item in localPrices)
-                            Console.WriteLine($"{item.Key} : {item.Value.PricePoint.Attributes.CustomerPrice} {item.Value.Currency}");
+                            Console.WriteLine($"{item.Key,5} : {item.Value.PricePoint.Attributes.CustomerPrice,10} {item.Value.Currency,5}");
                     }
                 }
             }
@@ -99,7 +99,7 @@ public class Command_List : CommandBase
         var pointsApi = new InAppPurchasePricePointsApi(ApiConfig);
         var schedulesApi = new InAppPurchasePriceSchedulesApi(ApiConfig);
 
-        Console.WriteLine($"Getting full price list for {iap.Attributes.Name}...");
+        Console.WriteLine($"   -> Getting full price list for {iap.Attributes.Name}...");
 
         var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(
             iap.Id,
@@ -131,7 +131,7 @@ public class Command_List : CommandBase
         if (verbose)
             Console.WriteLine($"Loaded {results.Count} manual overrides.");
 
-        string? basePricePointId = (await GetBasePrice(iap))?.Id;
+        string? basePricePointId = (await GetBasePrice(iap))?.PricePoint.Id;
 
         if (basePricePointId == null)
         {
@@ -190,7 +190,9 @@ public class Command_List : CommandBase
     private Dictionary<string, InAppPriceData> ParsePricesAndCurrencies(InAppPurchasePricesResponse response, InAppPurchaseV2 iap)
     {
         var res = new Dictionary<string, InAppPriceData>();
-        if (response.Data == null || response.Included == null) return res;
+
+        if (response.Data == null || response.Included == null)
+            return res;
 
         var pointsMap = response.Included
             .Select(x => x.ActualInstance)
@@ -248,7 +250,7 @@ public class Command_List : CommandBase
         return map;
     }
 
-    private async Task<InAppPurchasePricePoint?> GetBasePrice(InAppPurchaseV2 iap)
+    private async Task<InAppPriceData?> GetBasePrice(InAppPurchaseV2 iap)
     {
         var v = Args.HasFlag("-v");
 
@@ -278,7 +280,7 @@ public class Command_List : CommandBase
             var pricesResponse = await schedulesApi.InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
                 scheduleId,
                 filterTerritory: new List<string> { baseTerritory },
-                include: new List<string> { "inAppPurchasePricePoint" }
+                include: new List<string> { "inAppPurchasePricePoint", "territory" }
             );
 
             if (pricesResponse.Included != null)
@@ -294,7 +296,15 @@ public class Command_List : CommandBase
                             Console.WriteLine($"   -> Price ({baseTerritory}): {price} (Proceeds: {proceeds})");
                         }
 
-                        return pricePoint;
+                        var currencies = ExtractCurrencyMap(pricesResponse.Included);
+
+                        return new InAppPriceData
+                        {
+                            Iap = iap,
+                            PricePoint = pricePoint,
+                            TerritoryCode = baseTerritory,
+                            Currency = currencies[baseTerritory]
+                        };
                     }
                 }
             }
