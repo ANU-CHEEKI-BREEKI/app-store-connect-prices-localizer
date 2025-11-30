@@ -26,7 +26,9 @@ public class Command_Localize : CommandBase
             var basePrices = await Args.LoadJson<IapBasePrices>("--default-prices", GlobalConfig.iapBasePricesConfigPath) ?? new();
             var localPercentages = await Args.LoadJson<IapLocalizedPercentages>("--local-percentages", GlobalConfig.localPricesPercentagesConfigPath) ?? new();
 
-            Console.WriteLine("receiving IAP list...");
+            Console.WriteLine("   -> Localizing IAPs...");
+            Console.WriteLine("   -> Receiving IAP list...");
+            
             var appApi = new AppsApi(ApiConfig);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
             var iapsData = iaps.Data;
