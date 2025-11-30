@@ -5,6 +5,8 @@ using AppStoreConnect.Net.Model;
 
 public class Command_List : CommandBase
 {
+    public override string CommandName => "list";
+
     protected override async Task InternalExecuteAsync()
     {
         try
@@ -39,7 +41,6 @@ public class Command_List : CommandBase
         }
     }
 
-    public override bool IsMatches(string[] args) => args.Begins("list");
     public override void PrintHelp()
     {
         Console.WriteLine("list");
