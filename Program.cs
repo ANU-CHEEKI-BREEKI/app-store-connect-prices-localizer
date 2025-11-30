@@ -17,27 +17,29 @@ if (command is null)
     return;
 }
 
-var appSettings = await CommandLinesUtils.LoadJson<Credentials>(args, "--credentials", "../config.json");
+var appSettings = await args.LoadJson<Credentials>("--credentials", "../config.json");
 if (appSettings is null)
 {
     Console.WriteLine("Error: Failed to deserialize configuration from JSON.");
     return;
 }
 
-if (!File.Exists(appSettings.PrivateKeyFilePath))
+var privateKeyFilePath = Path.Combine(AppContext.BaseDirectory, appSettings.PrivateKeyFilePath);
+
+if (!File.Exists(privateKeyFilePath))
 {
-    Console.WriteLine($"Error: Private key file '{appSettings.PrivateKeyFilePath}' not found.");
+    Console.WriteLine($"Error: Private key file '{privateKeyFilePath}' not found.");
     return;
 }
 
-var privateKeyContent = await File.ReadAllTextAsync(appSettings.PrivateKeyFilePath);
+var privateKeyContent = await File.ReadAllTextAsync(privateKeyFilePath);
 var config = new AppStoreConnectConfiguration(
     appSettings.KeyId,
     appSettings.IssuerId,
     privateKeyContent
 );
 
-var globalConfig = await CommandLinesUtils.LoadJson<GlobalConfig>(args, "--global-config", "../global-config.json");
+var globalConfig = await args.LoadJson<GlobalConfig>("--global-config", "../global-config.json");
 
 command.Initialize(
     config,
