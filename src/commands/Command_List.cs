@@ -250,7 +250,7 @@ public class Command_List : CommandBase
         return map;
     }
 
-    private async Task<InAppPriceData?> GetBasePrice(InAppPurchaseV2 iap)
+    public async Task<InAppPriceData?> GetBasePrice(InAppPurchaseV2 iap)
     {
         var v = Args.HasFlag("-v");
 

@@ -34,7 +34,7 @@ public class Command_Restore : CommandBase
     /// <summary>
     /// set default prices
     /// </summary>
-    public async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
+    private async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
     {
         try
         {
