@@ -22,15 +22,26 @@ public class Command_List : CommandBase
 
             var appApi = new AppsApi(ApiConfig);
 
-            var pricePoints = new Dictionary<InAppPurchaseV2, InAppPurchasePricePoint?>();
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
+
+            var singeIap = Args.GetParameter("--iap", "");
+            if (!string.IsNullOrEmpty(singeIap))
+                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
 
             if (Args.HasFlag("-p"))
             {
+                var pricePoints = new Dictionary<InAppPurchaseV2, InAppPurchasePricePoint?>();
+                var localPricePoints = new Dictionary<InAppPurchaseV2, Dictionary<string, InAppPurchasePricePoint>>();
+
                 Console.WriteLine($"   -> Fetching prices...");
 
                 foreach (var iap in iaps.Data)
+                {
                     pricePoints[iap] = await GetBasePrice(iap);
+
+                    if (Args.HasFlag("-l"))
+                        localPricePoints[iap] = await GetAllLocalPricesAsync(iap);
+                }
 
                 Console.WriteLine($"Customer Prices for {baseTerritory}:");
 
@@ -38,6 +49,13 @@ public class Command_List : CommandBase
                 {
                     var price = pricePoints[iap];
                     Console.WriteLine($"{iap.Attributes.ProductId}: {price?.Attributes?.CustomerPrice}");
+
+                    if (Args.HasFlag("-l"))
+                    {
+                        var localPrices = localPricePoints[iap];
+                        foreach (var item in localPrices)
+                            Console.WriteLine($"{item.Key} : {item.Value.Attributes.CustomerPrice}");
+                    }
                 }
             }
             else
@@ -55,8 +73,10 @@ public class Command_List : CommandBase
     public override void PrintHelp()
     {
         Console.WriteLine("list");
-        Console.WriteLine("    usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [-v] [-p] [-l]");
+        Console.WriteLine("    usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [--iap {iap-product-id}] [-v] [-p] [-l]");
         Console.WriteLine("    list all IAP in project (NOT subscriptions)");
+        Console.WriteLine("    --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)");
+        Console.WriteLine("           get prices for only one iap product (to not spam your console with data)");
         Console.WriteLine("    -p  print base prices");
         Console.WriteLine("    -p  print localized prices");
         Console.WriteLine("    -v  verbose logs");
@@ -66,8 +86,7 @@ public class Command_List : CommandBase
     {
         var v = Args.HasFlag("-v");
 
-        if (v)
-            Console.WriteLine($"   -> Fetching prices for: {iap.Attributes.Name}...");
+        Console.WriteLine($"   -> Fetching prices for: {iap.Attributes.Name}...");
 
         var iapApi = new InAppPurchasesApi(ApiConfig);
         var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory);
@@ -129,6 +148,8 @@ public class Command_List : CommandBase
 
     public async Task<Dictionary<string, InAppPurchasePricePoint>> GetAllLocalPricesAsync(InAppPurchaseV2 iap)
     {
+        var verbose = Args.HasFlag("-v");
+
         var results = new Dictionary<string, InAppPurchasePricePoint>();
         var iapApi = new InAppPurchasesApi(ApiConfig);
         var pointsApi = new InAppPurchasePricePointsApi(ApiConfig);
@@ -142,7 +163,8 @@ public class Command_List : CommandBase
 
         if (scheduleResponse.Data == null)
         {
-            Console.WriteLine("Error: Schedule Data is null.");
+            if (verbose)
+                Console.WriteLine("Error: Schedule Data is null.");
             return results;
         }
 
@@ -158,18 +180,21 @@ public class Command_List : CommandBase
         foreach (var kvp in manualPricesMap)
             results[kvp.Key] = kvp.Value;
 
-        Console.WriteLine($"Loaded {results.Count} manual overrides.");
+        if (verbose)
+            Console.WriteLine($"Loaded {results.Count} manual overrides.");
 
 
         string? basePricePointId = (await GetBasePrice(iap)).Id;
 
         if (basePricePointId == null)
         {
-            Console.WriteLine("Warning: Could not determine Base Price Point ID. Cannot fetch equalizations.");
+            if (verbose)
+                Console.WriteLine("Warning: Could not determine Base Price Point ID. Cannot fetch equalizations.");
             return results;
         }
 
-        Console.WriteLine($"Fetching equalizations (world prices) for Point ID: {basePricePointId}...");
+        if (verbose)
+            Console.WriteLine($"Fetching equalizations (world prices) for Point ID: {basePricePointId}...");
 
         try
         {
@@ -192,7 +217,9 @@ public class Command_List : CommandBase
                             results[territoryId] = pricePoint;
                     }
                 }
-                Console.WriteLine($"Added {equalizationsResponse.Data.Count} automatic prices.");
+
+                if (verbose)
+                    Console.WriteLine($"Added {equalizationsResponse.Data.Count} automatic prices.");
             }
         }
         catch (Exception ex)
