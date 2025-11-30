@@ -1,4 +1,4 @@
-public class CommandsCollection : List<CommandBase>
+public class CommandsCollection : Dictionary<string, CommandBase>
 {
     public bool TryPrintHelp(string[] args)
     {
@@ -15,10 +15,13 @@ public class CommandsCollection : List<CommandBase>
 
         foreach (var item in this)
         {
-            item.PrintHelp();
+            item.Value.PrintHelp();
             Console.WriteLine();
         }
 
         return true;
     }
+
+    public void Add(CommandBase command) => this.Add(command.CommandName, command);
+
 }

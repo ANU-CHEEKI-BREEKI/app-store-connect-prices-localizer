@@ -1,6 +1,4 @@
-﻿using System.Text.Json;
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
+﻿using AppStoreConnect.Net.Client;
 
 var commands = new CommandsCollection()
 {
@@ -10,7 +8,7 @@ var commands = new CommandsCollection()
 if (commands.TryPrintHelp(args))
     return;
 
-var command = commands.FirstOrDefault(c => c.IsMatches(args));
+var command = commands.Values.FirstOrDefault(c => args.Begins(c.CommandName));
 if (command is null)
 {
     Console.WriteLine("no command fount for passed parameters");
@@ -39,7 +37,7 @@ var config = new AppStoreConnectConfiguration(
 
 var globalConfig = await CommandLinesUtils.LoadJson<GlobalConfig>(args, false, "--global-config", "../global-config.json");
 
-command.Initialize(config, globalConfig, args);
+command.Initialize(config, globalConfig ?? new GlobalConfig("", "USA", ""), args);
 await command.ExecuteAsync();
 
 Console.WriteLine("done.");
