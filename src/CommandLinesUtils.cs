@@ -4,6 +4,8 @@ public static class CommandLinesUtils
 {
     public static async Task<T?> LoadJson<T>(this string[] args, string arg, string defaultPath)
     {
+        defaultPath = Path.Combine(AppContext.BaseDirectory, defaultPath);
+
         var pathToPricesTemplate = GetParameter(args, arg, defaultPath);
 
         var json = await File.ReadAllTextAsync(pathToPricesTemplate);
