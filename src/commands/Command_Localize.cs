@@ -40,7 +40,7 @@ public class Command_Localize : CommandBase
 
             var prices = await listCommand.GetAllLocalPricesAsync(iaps.Data[0]);
             foreach (var pr in prices)
-                Console.WriteLine($"{pr.Key} : {pr.Value.Attributes.CustomerPrice}");
+                Console.WriteLine($"{pr.Key} : {pr.Value.PricePoint.Attributes.CustomerPrice}");
 
             return;
 
