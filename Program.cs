@@ -3,6 +3,7 @@
 var commands = new CommandsCollection()
 {
     new Command_List(),
+    new Command_Localize(),
 };
 
 if (commands.TryPrintHelp(args))
@@ -15,7 +16,7 @@ if (command is null)
     return;
 }
 
-var appSettings = await CommandLinesUtils.LoadJson<Credentials>(args, false, "--credentials", "../config.json");
+var appSettings = await CommandLinesUtils.LoadJson<Credentials>(args, "--credentials", "../config.json");
 if (appSettings is null)
 {
     Console.WriteLine("Error: Failed to deserialize configuration from JSON.");
@@ -35,9 +36,18 @@ var config = new AppStoreConnectConfiguration(
     privateKeyContent
 );
 
-var globalConfig = await CommandLinesUtils.LoadJson<GlobalConfig>(args, false, "--global-config", "../global-config.json");
+var globalConfig = await CommandLinesUtils.LoadJson<GlobalConfig>(args, "--global-config", "../global-config.json");
 
-command.Initialize(config, globalConfig ?? new GlobalConfig("", "USA", ""), args);
+command.Initialize(
+    config,
+    globalConfig ?? new GlobalConfig(
+        appId: "",
+        baseTerritory: "USA",
+        iapBasePricesConfigPath: "../default-prices-usd.json",
+        localPricesPercentagesConfigPath: "./configs/localized-prices-template.json"
+    ),
+    args
+);
 await command.ExecuteAsync();
 
 Console.WriteLine("done.");

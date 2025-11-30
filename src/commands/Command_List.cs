@@ -56,7 +56,7 @@ public class Command_List : CommandBase
             Console.WriteLine($"   -> Fetching prices for: {iap.Attributes.Name}...");
 
         var iapApi = new InAppPurchasesApi(ApiConfig);
-        var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory) ?? "USA";
+        var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory);
 
         var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(iap.Id);
 

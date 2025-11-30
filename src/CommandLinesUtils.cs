@@ -2,12 +2,12 @@ using Newtonsoft.Json;
 
 public static class CommandLinesUtils
 {
-    public static async Task<T?> LoadJson<T>(this string[] args, bool logToConsole, string arg, string defaultPath)
+    public static async Task<T?> LoadJson<T>(this string[] args, string arg, string defaultPath)
     {
         var pathToPricesTemplate = GetParameter(args, arg, defaultPath);
 
         var json = await File.ReadAllTextAsync(pathToPricesTemplate);
-        if (logToConsole)
+        if (args.IsVerbose())
             Console.WriteLine($"loaded json: {json}");
 
         var pricesTemplate = JsonConvert.DeserializeObject<T>(json);
@@ -32,9 +32,12 @@ public static class CommandLinesUtils
         return true;
     }
 
+    public static bool IsVerbose(this string[] args)
+        => args.HasFlag("-v");
+
     public static bool HasFlag(this string[] args, string arg)
         => Array.IndexOf(args, arg) >= 0;
-    
+
     public static bool Begins(this string[] args, string arg)
         => Array.IndexOf(args, arg) == 0;
 }
