@@ -15,13 +15,7 @@ public abstract class CommandBase
         GlobalConfig = globalConfig;
     }
 
-    public async Task ExecuteAsync()
-    {
-        if (!Args.Begins(CommandName))
-            return;
-
-        await InternalExecuteAsync();
-    }
+    public async Task ExecuteAsync() => await InternalExecuteAsync();
 
     public abstract void PrintHelp();
 

@@ -34,7 +34,7 @@ public class Command_Restore : CommandBase
     /// <summary>
     /// set default prices
     /// </summary>
-    private async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
+    public async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
     {
         try
         {
@@ -94,11 +94,11 @@ public class Command_Restore : CommandBase
 
     private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
     {
-        Console.WriteLine($"   -> Set iap price for IAP: {iapSettings.Iap.Attributes.ProductId}.");
+        Console.WriteLine($"   -> Prepare iap price for IAP: {iapSettings.Iap.Attributes.ProductId}.");
 
         var manualPrices = new List<InAppPurchasePriceScheduleCreateRequestIncludedInner>();
 
-        Console.WriteLine($"   -> Set iap price for territory: {iapSettings.BaseTerritoryCode}.");
+        Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
 
         var basePoint = await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
         manualPrices.Add(
@@ -111,7 +111,7 @@ public class Command_Restore : CommandBase
             if (territory.Key == iapSettings.BaseTerritoryCode)
                 continue;
 
-            Console.WriteLine($"   -> Set iap price for territory: {territory.Key}.");
+            Console.WriteLine($"   -> Prepare iap price for territory: {territory.Key}.");
 
             var territoryCode = territory.Key;
             var targetPrice = territory.Value;

@@ -14,11 +14,6 @@ public class Command_Localize : CommandBase
     {
         try
         {
-            // restore prices first
-            var restorer = new Command_Restore();
-            restorer.Initialize(ApiConfig, GlobalConfig, Args);
-            await restorer.ExecuteAsync();
-
             var v = Args.HasFlag("-v");
 
             var appId = CommandLinesUtils.GetParameter(Args, "--app-id", GlobalConfig.appId);
@@ -26,9 +21,14 @@ public class Command_Localize : CommandBase
             var basePrices = await Args.LoadJson<IapBasePrices>("--default-prices", GlobalConfig.iapBasePricesConfigPath) ?? new();
             var localPercentages = await Args.LoadJson<IapLocalizedPercentages>("--local-percentages", GlobalConfig.localPricesPercentagesConfigPath) ?? new();
 
+            // restore prices first
+            var restorer = new Command_Restore();
+            restorer.Initialize(ApiConfig, GlobalConfig, Args);
+            await restorer.RestorePrices(appId, baseTerritory, basePrices, v);
+
             Console.WriteLine("   -> Localizing IAPs...");
             Console.WriteLine("   -> Receiving IAP list...");
-            
+
             var appApi = new AppsApi(ApiConfig);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
             var iapsData = iaps.Data;
