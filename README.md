@@ -16,7 +16,7 @@ In this repository, there is a program that will help you ***automatically*** up
 
 One command:
 
-    ios-iap-managing localize
+    dotnet run -- localize
 
 And all prices will be localized!
 
@@ -25,33 +25,36 @@ And all prices will be localized!
 
 **You also need to set up `../config.json` file** [Instructions from Apple](https://developer.apple.com/documentation/appstoreserverapi/creating-api-keys-to-authorize-api-requests)
 
+Also you can provide some comand parameters each time calling `localize`, or setup this config to use 'default' parameters
+
     {
         "KeyId": "XYZ123ABC",
         "IssuerId": "11111111-AABB-CCDD-EEFF-123456ABCDEF",
-        "PrivateKeyFilePath": "../AuthKey_XYZ123ABC.p8"
+        "PrivateKeyFilePath": "../../AuthKey_XYZ123ABC.p8",
+
+        "AppId": "1234567890", // your app AppleId from App Store Connect App info page
+        "DefaultPricesFilePath": "./default-prices.json",
+        "LocalizedPricesTemplateFilePath": "",
+        
+        "DefaultRegion": "USA",
+        "Iap": ""
     }
 
+all paths in config are relative to config.json location
 
 there are example of `../default-prices.json`
 
     {
-        "crystals_1": "0.99",
-        "crystals_6": "99.99",
-        "disable_ads": "9.99",
+        "crystals_1": "1",
+        "crystals_6": "100",
+        "disable_ads": "10",
     }
 
-there are example of `../global-config.json`
-you can provide some comand parameters each time calling `localize`, or setup this config to use 'default' parameters
-
-    {
-        "appId": "1234567890",  // your app AppleId from App Store Connect App info page
-        "baseTerritory": "USA",
-        "iapBasePricesConfigPath": "../default-prices-usd.json",
-        "localPricesPercentagesConfigPath": "./configs/localized-prices-template.json"
-    }
+you can define rounded prices, the program will subtract 0.01 from them automatically
 
 There are your default setup if you run program as `dotnet run -- localize` instead of running executable
-<img width="312" height="344" alt="image" src="https://github.com/user-attachments/assets/ce7b7831-e5a1-4500-a662-9a0b735d3be1" />
+
+<img width="312" alt="image" src="image.png" />
 
 
 ---
@@ -111,34 +114,50 @@ There are a away to [manage requests rate limits](https://developer.apple.com/do
 
 - 
 
-    list
-        usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [--iap {iap-product-id}] [-v] [-p] [-l]
-        list all IAP in project (NOT subscriptions)
-        --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)
-               get prices for only one iap product (to not spam your console with data)
-        -p  print base prices
-        -p  print localized prices
-        -v  verbose logs
+    list [-l] [-v]
+
+
+    description:
+            Lists all One-time products in the project, and their prices for
+            specified region.
+
+    options:
+    -p                           Include pricing
+    -l                           Include local pricing for all regions. Only if -p is specified
+    -v                           Include detailed verbose output
   
 - 
 
-    localize
-        usage: localize [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--local-percentages {local-percentages.json}] [--iap {iap-product-id}] [-v]
-        for each iap (NOT subscriptions) set local prices as percentage of base territory price
-        --default-prices  path to json with default prices for base territory
-            used to run 'restore' command internally to reset all prices and get valid localized prices as 100% from base price
-        --local-percentages  path to json with percentages for each country
-            will set local prices as basePrice * percentage
-        --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)
-            get prices for only one iap product (to not spam your console with data)
+
+    localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [-v] [-l]
+
+
+    description:
+            Recalculates prices for all regions based on the default currency price
+            provided in your JSON config and localized prices template.
+
+    options:
+    --prices <path>              Specifies path to json with default prices in default currency. If not
+                                specified, used path from global config json.
+    --localized-template <path>  Specifies path to json with percentages for each region that needs to
+                                be localized. Default path is:
+                                ./configs/localized-prices-template.json
+    -v                           Include additional verbose output
+    -l                           Include local pricing for all regions
+
   
 - 
 
-    restore
-        usage: restore [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--iap {iap-product-id}] [-v]
-        for each iap (NOT subscriptions) set base territory price (app store should recalculate ALL local prices based on 100% base price)
-        --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)
-            get prices for only one iap product (to not spam your console with data)
+    restore [--prices <path-to-default-prices.json>] [-v] [-l]
+
+
+    description:
+            Recalculates prices for all regions based on the default currency price
+            provided in your JSON config.
+
+    options:
+    -v                           Include additional verbose output
+    -l                           Include local pricing for all regions
 
 ---
 
