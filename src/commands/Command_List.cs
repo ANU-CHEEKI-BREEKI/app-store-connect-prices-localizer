@@ -7,62 +7,76 @@ public class Command_List : CommandBase
 {
     public class TerritoryPrice : Dictionary<string, InAppPurchasePricePoint> { }
 
-    public override string CommandName => "list";
-
     protected override async Task InternalExecuteAsync()
     {
         try
         {
+            var printPrices = Args.HasFlag("-p");
+            var printLocalPrices = Args.HasFlag("-l");
             var verbose = Args.HasFlag("-v");
 
-            Console.WriteLine("receiving IAP list...");
+            if (verbose)
+                Console.WriteLine("   -> receiving IAP list...");
 
-            var appId = CommandLinesUtils.GetParameter(Args, "--app-id", GlobalConfig.appId);
-            var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory);
+            var appId = Config.AppId;
+            var baseTerritory = Config.DefaultRegion;
 
-            var appApi = new AppsApi(ApiConfig);
+            var appApi = new AppsApi(Service);
 
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
 
-            var singeIap = Args.GetParameter("--iap", "");
+            var singeIap = Config.Iap;
             if (!string.IsNullOrEmpty(singeIap))
                 iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
 
-            if (Args.HasFlag("-p"))
+
+            foreach (var iap in iaps.Data)
+                Console.WriteLine(iap.Attributes.ProductId);
+
+            Console.WriteLine();
+
+            if (!printPrices)
+                return;
+
+            var pricePoints = new Dictionary<InAppPurchaseV2, InAppPriceData?>();
+            var localPricePoints = new Dictionary<InAppPurchaseV2, Dictionary<string, InAppPriceData>>();
+
+            Console.WriteLine($"   -> fetching prices...");
+
+            foreach (var iap in iaps.Data)
             {
-                var pricePoints = new Dictionary<InAppPurchaseV2, InAppPriceData?>();
-                var localPricePoints = new Dictionary<InAppPurchaseV2, Dictionary<string, InAppPriceData>>();
+                pricePoints[iap] = await GetBasePrice(iap);
 
-                Console.WriteLine($"   -> Fetching prices...");
+                if (printLocalPrices)
+                    localPricePoints[iap] = await GetAllLocalPricesAsync(iap);
+            }
 
-                foreach (var iap in iaps.Data)
+            var stringPairs = new List<StringPairs>();
+
+            foreach (var iap in iaps.Data)
+            {
+                var price = pricePoints[iap];
+
+                stringPairs.Add(new StringPairs { A = iap.Attributes.ProductId, B = $"{price?.PricePoint?.Attributes?.CustomerPrice} {price?.Currency}" });
+                // Console.WriteLine($"{price?.TerritoryCode,5} {price?.PricePoint?.Attributes?.CustomerPrice,10} {price?.Currency,5} {iap.Attributes.ProductId,5}");
+
+                if (printLocalPrices)
                 {
-                    pricePoints[iap] = await GetBasePrice(iap);
-
-                    if (Args.HasFlag("-l"))
-                        localPricePoints[iap] = await GetAllLocalPricesAsync(iap);
-                }
-
-                Console.WriteLine($"Customer Prices for {baseTerritory}:");
-
-                foreach (var iap in iaps.Data)
-                {
-                    var price = pricePoints[iap];
-                    Console.WriteLine($"{price?.TerritoryCode,5} {price?.PricePoint?.Attributes?.CustomerPrice,10} {price?.Currency,5} {iap.Attributes.ProductId,5}");
-
-                    if (Args.HasFlag("-l"))
-                    {
-                        var localPrices = localPricePoints[iap];
-                        foreach (var item in localPrices)
-                            Console.WriteLine($"{item.Key,5} : {item.Value.PricePoint.Attributes.CustomerPrice,10} {item.Value.Currency,5}");
-                    }
+                    var localPrices = localPricePoints[iap];
+                    foreach (var item in localPrices)
+                        stringPairs.Add(new StringPairs { A = $"    {item.Key}", B = $"{item.Value.PricePoint.Attributes.CustomerPrice} {item.Value.Currency}" });
+                    // Console.WriteLine($"{item.Key,5} : {item.Value.PricePoint.Attributes.CustomerPrice,10} {item.Value.Currency,5}");
                 }
             }
-            else
-            {
-                foreach (var iap in iaps.Data)
-                    Console.WriteLine($"{iap.Attributes.ProductId}");
-            }
+
+            var aMaxLength = stringPairs.Max(p => p.A.Length) + 4;
+            var bMaxLength = stringPairs.Max(p => p.B.Length) + 4;
+
+            Console.WriteLine();
+
+            foreach (var item in stringPairs)
+                Console.WriteLine($"{item.A.PadRight(aMaxLength, '.')}{item.B.PadLeft(bMaxLength, '.')}");
+
         }
         catch (Exception ex)
         {
@@ -70,16 +84,38 @@ public class Command_List : CommandBase
         }
     }
 
+    private class StringPairs
+    {
+        public string A;
+        public string B;
+    }
+
+    public override string Name => "list";
+    public override string Description => "Lists all One-time products in the project, and their prices for specified region.";
+
     public override void PrintHelp()
     {
-        Console.WriteLine("list");
-        Console.WriteLine("    usage: list [--app-id {your-app-id}] [--base-territory {territory-code}] [--iap {iap-product-id}] [-v] [-p] [-l]");
-        Console.WriteLine("    list all IAP in project (NOT subscriptions)");
-        Console.WriteLine("    --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)");
-        Console.WriteLine("           get prices for only one iap product (to not spam your console with data)");
-        Console.WriteLine("    -p  print base prices");
-        Console.WriteLine("    -p  print localized prices");
-        Console.WriteLine("    -v  verbose logs");
+        Console.WriteLine("list [-l] [-v]");
+        Console.WriteLine();
+        Console.WriteLine();
+
+        Console.WriteLine("description:");
+        CommandLinesUtils.PrintDescription(Description);
+
+        Console.WriteLine();
+        Console.WriteLine("options:");
+        CommandLinesUtils.PrintOption(
+            "-p",
+            "Include pricing"
+        );
+        CommandLinesUtils.PrintOption(
+            "-l",
+            "Include local pricing for all regions. Only if -p is specified"
+        );
+        CommandLinesUtils.PrintOption(
+            "-v",
+            "Include detailed verbose output"
+        );
     }
 
     public class InAppPriceData
@@ -95,9 +131,9 @@ public class Command_List : CommandBase
         var verbose = Args.HasFlag("-v");
         var results = new Dictionary<string, InAppPriceData>();
 
-        var iapApi = new InAppPurchasesApi(ApiConfig);
-        var pointsApi = new InAppPurchasePricePointsApi(ApiConfig);
-        var schedulesApi = new InAppPurchasePriceSchedulesApi(ApiConfig);
+        var iapApi = new InAppPurchasesApi(Service);
+        var pointsApi = new InAppPurchasePricePointsApi(Service);
+        var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
 
         Console.WriteLine($"   -> Getting full price list for {iap.Attributes.Name}...");
 
@@ -256,8 +292,8 @@ public class Command_List : CommandBase
 
         Console.WriteLine($"   -> Fetching prices for: {iap.Attributes.Name}...");
 
-        var iapApi = new InAppPurchasesApi(ApiConfig);
-        var baseTerritory = Args.GetParameter("--base-territory", GlobalConfig.baseTerritory);
+        var iapApi = new InAppPurchasesApi(Service);
+        var baseTerritory = Config.DefaultRegion;
 
         var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(iap.Id);
 
@@ -270,7 +306,7 @@ public class Command_List : CommandBase
 
         var scheduleId = scheduleResponse.Data.Id;
 
-        var schedulesApi = new InAppPurchasePriceSchedulesApi(ApiConfig);
+        var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
 
         if (v)
             Console.WriteLine($"   -> Fetching prices for Schedule ID: {scheduleId}...");

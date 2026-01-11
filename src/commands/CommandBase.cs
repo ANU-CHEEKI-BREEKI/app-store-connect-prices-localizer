@@ -2,22 +2,23 @@ using AppStoreConnect.Net.Client;
 
 public abstract class CommandBase
 {
-    public AppStoreConnectConfiguration ApiConfig { get; private set; } = null!;
-    public GlobalConfig GlobalConfig { get; private set; } = null!;
+    public AppStoreConnectConfiguration Service { get; private set; } = null!;
+    public Config Config { get; private set; } = null!;
     public string[] Args { get; set; } = null!;
 
-    public abstract string CommandName { get; }
+    public abstract string Name { get; }
+    public abstract string Description { get; }
 
-    public void Initialize(AppStoreConnectConfiguration config, GlobalConfig globalConfig, string[] args)
+    public void Initialize(AppStoreConnectConfiguration service, Config config, string[] args)
     {
         Args = args;
-        ApiConfig = config;
-        GlobalConfig = globalConfig;
+        Service = service;
+        Config = config;
     }
 
-    public async Task ExecuteAsync() => await InternalExecuteAsync();
+    public async Task ExecuteAsync()
+        => await InternalExecuteAsync();
 
     public abstract void PrintHelp();
-
     protected abstract Task InternalExecuteAsync();
 }
