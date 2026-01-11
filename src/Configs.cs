@@ -1,4 +1,16 @@
-public record Credentials(string KeyId, string IssuerId, string PrivateKeyFilePath);
-public record GlobalConfig(string appId, string baseTerritory, string iapBasePricesConfigPath, string localPricesPercentagesConfigPath);
-public class IapBasePrices : Dictionary<string, double> { }
-public class IapLocalizedPercentages : Dictionary<string, double> { }
+public class Config
+{
+    public string KeyId { get; set; } = "";
+    public string IssuerId { get; set; } = "";
+    public string PrivateKeyFilePath { get; set; } = "";
+
+    public string AppId { get; set; } = "";
+    public string DefaultPricesFilePath { get; set; } = "";
+    public string LocalizedPricesTemplateFilePath { get; set; } = "";
+    
+    public string DefaultRegion { get; set; } = "USA";
+    public string Iap { get; set; } = "";
+}
+
+public class ProductConfigs : Dictionary<string, decimal> { }
+public class LocalizedPricesPercentagesConfigs : Dictionary<string, decimal> { }
