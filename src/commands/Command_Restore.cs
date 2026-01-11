@@ -24,7 +24,7 @@ public class Command_Restore : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("restore [--prices <path-to-default-prices.json>] [-v]");
+        Console.WriteLine("restore [--prices <path-to-default-prices.json>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -38,20 +38,28 @@ public class Command_Restore : CommandBase
             "-v",
             "Include additional verbose output"
         );
-        // CommandLinesUtils.PrintOption(
-        //     "-l",
-        //     "Include local pricing for all regions"
-        // );
+        CommandLinesUtils.PrintOption(
+            "-l",
+            "Include local pricing for all regions"
+        );
     }
 
-    protected override async Task InternalExecuteAsync() => await RestorePrices();
+    protected override async Task InternalExecuteAsync()
+    {
+        await RestorePrices();
+
+        // print what we set at the end
+        var listCommand = new Command_List();
+        listCommand.Initialize(Service, Config, Args);
+        await listCommand.ExecuteAsync();
+    }
 
     /// <summary>
     /// set default prices
     /// </summary>
     private async Task RestorePrices()
     {
-        var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, Config.DefaultPricesFilePath, Args.HasFlag("-v")) ?? new();
+        var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, "../default-prices-usd.json", Args.HasFlag("-v")) ?? new();
 
         var verbose = Args.HasFlag("-v");
         try
@@ -88,7 +96,6 @@ public class Command_Restore : CommandBase
             }
 
             await SetPrices(iapPrices, verbose);
-
         }
         catch (Exception ex)
         {

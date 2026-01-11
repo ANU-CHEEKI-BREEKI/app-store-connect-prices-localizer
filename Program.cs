@@ -3,7 +3,7 @@
 var commands = new CommandsCollection()
 {
     new Command_List(),
-    // new Command_Localize(),
+    new Command_Localize(),
     new Command_Restore(),
 };
 
@@ -78,7 +78,3 @@ await command.ExecuteAsync();
 
 Console.WriteLine();
 Console.WriteLine("done.");
-
-// baseTerritory: "USA",
-// iapBasePricesConfigPath: "../default-prices-usd.json",
-// localPricesPercentagesConfigPath: "./configs/localized-prices-template.json"

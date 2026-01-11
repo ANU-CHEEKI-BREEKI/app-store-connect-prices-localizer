@@ -1,132 +1,149 @@
-// using System.Globalization;
-// using AppStoreConnect.Net.Api;
-// using AppStoreConnect.Net.Client;
-// using AppStoreConnect.Net.Model;
+using System.Globalization;
+using AppStoreConnect.Net.Api;
+using AppStoreConnect.Net.Model;
 
-// // FIXME: delete
-// // { DELETE THIS }
+public class Command_Localize : CommandBase
+{
+    protected override async Task InternalExecuteAsync()
+    {
+        try
+        {
+            var v = Args.HasFlag("-v");
 
-// public class Command_Localize : CommandBase
-// {
-//     public override string Name => "localize";
+            var appId = Config.AppId;
+            var baseTerritory = Config.DefaultRegion;
+            var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, "../default-prices-usd.json", Args.HasFlag("-v")) ?? new();
+            var localPercentages = await CommandLinesUtils.LoadJson<LocalizedPricesPercentagesConfigs>(Config.LocalizedPricesTemplateFilePath, "./configs/localized-prices-template.json", Args.HasFlag("-v")) ?? new();
 
-//     protected override async Task InternalExecuteAsync()
-//     {
-//         try
-//         {
-//             var v = Args.HasFlag("-v");
+            // restore prices first
+            var restorer = new Command_Restore();
+            restorer.Initialize(Service, Config, Args);
+            await restorer.ExecuteAsync();
 
-//             var appId = CommandLinesUtils.GetParameter(Args, "--app-id", Config.appId);
-//             var baseTerritory = Args.GetParameter("--base-territory", Config.baseTerritory);
-//             var basePrices = await Args.LoadJson<IapBasePrices>("--default-prices", Config.iapBasePricesConfigPath) ?? new();
-//             var localPercentages = await Args.LoadJson<IapLocalizedPercentages>("--local-percentages", Config.localPricesPercentagesConfigPath) ?? new();
+            Console.WriteLine("   -> Localizing IAPs...");
+            Console.WriteLine("   -> Receiving IAP list...");
 
-//             // restore prices first
-//             var restorer = new Command_Restore();
-//             restorer.Initialize(Service, Config, Args);
-//             // i dont want to bother to pass arguments here
-//             // lets just execute as command
-//             await restorer.ExecuteAsync();
+            var appApi = new AppsApi(Service);
+            var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
 
-//             Console.WriteLine("   -> Localizing IAPs...");
-//             Console.WriteLine("   -> Receiving IAP list...");
+            var singeIap = Config.Iap;
+            if (!string.IsNullOrEmpty(singeIap))
+                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
 
-//             var appApi = new AppsApi(Service);
-//             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
+            // using to get local prices
+            var listCommand = new Command_List();
+            listCommand.Initialize(Service, Config, Args);
 
-//             var singeIap = Args.GetParameter("--iap", "");
-//             if (!string.IsNullOrEmpty(singeIap))
-//                 iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
+            var pricesSetup = new List<IapPriceSetup>();
 
-//             // using to get local prices
-//             var listCommand = new Command_List();
-//             listCommand.Initialize(Service, Config, Args);
+            foreach (var item in iaps.Data)
+                await LocalizePrises(item, listCommand, pricesSetup, localPercentages, v);
 
-//             var pricesSetup = new List<IapPriceSetup>();
+            await restorer.SetPrices(pricesSetup, v);
 
-//             foreach (var item in iaps.Data)
-//                 await LocalizePrises(item, listCommand, pricesSetup, localPercentages, v);
+            // print what we set at the end        
+            await listCommand.ExecuteAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
 
-//             await restorer.SetPrices(pricesSetup, v);
-//         }
-//         catch (Exception ex)
-//         {
-//             Console.WriteLine(ex);
-//         }
-//     }
+    private async Task LocalizePrises(InAppPurchaseV2 iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, bool v)
+    {
+        var basePice = await listCommand.GetBasePrice(iap);
+        var prices = await listCommand.GetAllLocalPricesAsync(iap);
 
-//     private async Task LocalizePrises(InAppPurchaseV2 iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, IapLocalizedPercentages localPercentages, bool v)
-//     {
-//         var basePice = await listCommand.GetBasePrice(iap);
-//         var prices = await listCommand.GetAllLocalPricesAsync(iap);
+        var priceSetup = new IapPriceSetup()
+        {
+            Iap = iap,
+            BasePrice = double.Parse(basePice.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture),
+            BaseTerritoryCode = basePice.TerritoryCode,
+            LocalPrices = new()
+        };
+        pricesSetup.Add(priceSetup);
 
-//         var priceSetup = new IapPriceSetup()
-//         {
-//             Iap = iap,
-//             BasePrice = double.Parse(basePice.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture),
-//             BaseTerritoryCode = basePice.TerritoryCode,
-//             LocalPrices = new()
-//         };
-//         pricesSetup.Add(priceSetup);
+        Console.WriteLine($"   -> Localizing iap: {iap.Attributes.ProductId}.");
 
-//         Console.WriteLine($"   -> Localizing iap: {iap.Attributes.ProductId}.");
+        foreach (var pr in prices)
+        {
+            var multiplier = localPercentages.TryGetValue(pr.Value.TerritoryCode, out var percentage) ? percentage : 1m;
 
-//         foreach (var pr in prices)
-//         {
-//             var multiplier = localPercentages.TryGetValue(pr.Value.TerritoryCode, out var percentage) ? percentage : 1;
+            var newPrice = decimal.Parse(
+                pr.Value.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture
+            ) * multiplier;
 
-//             var newPrice = double.Parse(
-//                 pr.Value.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture
-//             ) * multiplier;
+            // make more like marketing price 5.00 -> 4.99 and hope it will be rounded as price point 4.99
+            if (Math.Truncate(newPrice) == newPrice)
+                newPrice -= 0.01m;
 
-//             // make more like marketing price 5.00 -> 4.99 and hope it will be rounded as price point 4.99
-//             newPrice -= 0.01;
+            priceSetup.LocalPrices[pr.Value.TerritoryCode] = (double)newPrice;
 
-//             priceSetup.LocalPrices[pr.Value.TerritoryCode] = newPrice;
+            if (v)
+                Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {pr.Value.PricePoint.Attributes.CustomerPrice,10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
+        }
+    }
 
-//             if (v)
-//                 Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {pr.Value.PricePoint.Attributes.CustomerPrice,10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
-//         }
-//     }
+    public override string Name => "localize";
+    public override string Description => "Recalculates prices for all regions based on the default currency price provided in your JSON config and localized prices template.";
 
-//     public override void PrintHelp()
-//     {
-//         Console.WriteLine("localize");
-//         Console.WriteLine("    usage: localize [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--local-percentages {local-percentages.json}] [--iap {iap-product-id}] [-v]");
-//         Console.WriteLine("    for each iap (NOT subscriptions) set local prices as percentage of base territory price");
-//         Console.WriteLine("    --default-prices  path to json with default prices for base territory");
-//         Console.WriteLine("        used to run 'restore' command internally to reset all prices and get valid localized prices as 100% from base price");
-//         Console.WriteLine("    --local-percentages  path to json with percentages for each country");
-//         Console.WriteLine("        will set local prices as basePrice * percentage");
-//         Console.WriteLine("    --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)");
-//         Console.WriteLine("        get prices for only one iap product (to not spam your console with data)");
-//     }
+    public override void PrintHelp()
+    {
+        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [-v] [-l]");
+        Console.WriteLine();
+        Console.WriteLine();
 
-//     public record StoreTerritory(string Code, string Currency);
+        Console.WriteLine("description:");
+        CommandLinesUtils.PrintDescription(Description);
 
-//     //TODO: move to separate command Command_ListTerritories
-//     public async Task<List<StoreTerritory>> GetAllTerritoriesAsync()
-//     {
-//         var territoriesApi = new TerritoriesApi(Service);
-//         var allCodes = new List<StoreTerritory>();
+        Console.WriteLine();
+        Console.WriteLine("options:");
 
-//         Console.WriteLine("loading supported territories ids...");
+        CommandLinesUtils.PrintOption(
+            "--prices <path>",
+            "Specifies path to json with default prices in default currency. If not specified, used path from global config json."
+        );
+        CommandLinesUtils.PrintOption(
+            "--localized-template <path>",
+            "Specifies path to json with percentages for each region that needs to be localized. Default path is: ./configs/localized-prices-template.json"
+        );
 
-//         //FIXME: what if more that 200?
-//         var response = await territoriesApi.TerritoriesGetCollectionAsync(limit: 200);
+        CommandLinesUtils.PrintOption(
+            "-v",
+            "Include additional verbose output"
+        );
+        CommandLinesUtils.PrintOption(
+            "-l",
+            "Include local pricing for all regions"
+        );
+    }
 
-//         foreach (var territory in response.Data)
-//         {
-//             // territory.Id - territory code (for example "USA", "UKR", "JPN")
-//             // territory.Attributes.Currency - currency code (for example "USD", "UAH", "JPY")
+    public record StoreTerritory(string Code, string Currency);
 
-//             allCodes.Add(new StoreTerritory
-//             (
-//                 territory.Id,
-//                 territory.Attributes.Currency
-//             ));
-//         }
+    //TODO: move to separate command Command_ListTerritories
+    public async Task<List<StoreTerritory>> GetAllTerritoriesAsync()
+    {
+        var territoriesApi = new TerritoriesApi(Service);
+        var allCodes = new List<StoreTerritory>();
 
-//         return allCodes;
-//     }
-// }
+        Console.WriteLine("loading supported territories ids...");
+
+        //FIXME: what if more that 200?
+        var response = await territoriesApi.TerritoriesGetCollectionAsync(limit: 200);
+
+        foreach (var territory in response.Data)
+        {
+            // territory.Id - territory code (for example "USA", "UKR", "JPN")
+            // territory.Attributes.Currency - currency code (for example "USD", "UAH", "JPY")
+
+            allCodes.Add(new StoreTerritory
+            (
+                territory.Id,
+                territory.Attributes.Currency
+            ));
+        }
+
+        return allCodes;
+    }
+}
