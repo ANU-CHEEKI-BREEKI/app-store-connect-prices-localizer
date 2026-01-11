@@ -1,357 +1,376 @@
-// using System.Globalization;
-// using AppStoreConnect.Net.Api;
-// using AppStoreConnect.Net.Client;
-// using AppStoreConnect.Net.Model;
+using System.Globalization;
+using AppStoreConnect.Net.Api;
+using AppStoreConnect.Net.Client;
+using AppStoreConnect.Net.Model;
 
-// public class IapPriceSetup
-// {
-//     /// <summary>
-//     /// whole class here to not be confused what is iap id, product id, product name, etc
-//     /// get InAppPurchaseV2 instances from AppStoreConnect Api
-//     /// </summary>
-//     public InAppPurchaseV2 Iap;
-//     public double BasePrice;
-//     public string BaseTerritoryCode;
-//     public PricePerTerritory LocalPrices = new();
-// }
+public class IapPriceSetup
+{
+    /// <summary>
+    /// whole class here to not be confused what is iap id, product id, product name, etc
+    /// get InAppPurchaseV2 instances from AppStoreConnect Api
+    /// </summary>
+    public InAppPurchaseV2 Iap;
+    public double BasePrice;
+    public string BaseTerritoryCode;
+    public PricePerTerritory LocalPrices = new();
+}
 
-// public class PricePerTerritory : Dictionary<string, double> { }
+public class PricePerTerritory : Dictionary<string, double> { }
 
-// public class Command_Restore : CommandBase
-// {
-//     public override string Name => "restore";
+public class Command_Restore : CommandBase
+{
+    public override string Name => "restore";
+    public override string Description => "Recalculates prices for all regions based on the default currency price provided in your JSON config.";
 
-//     protected override async Task InternalExecuteAsync() => await RestorePrices(
-//         CommandLinesUtils.GetParameter(Args, "--app-id", Config.appId),
-//         Args.GetParameter("--base-territory", Config.baseTerritory),
-//         (await Args.LoadJson<IapBasePrices>("--default-prices", Config.iapBasePricesConfigPath)) ?? new(),
-//         Args.IsVerbose()
-//     );
+    public override void PrintHelp()
+    {
+        Console.WriteLine("restore [--prices <path-to-default-prices.json>] [-v]");
+        Console.WriteLine();
+        Console.WriteLine();
 
-//     /// <summary>
-//     /// set default prices
-//     /// </summary>
-//     private async Task RestorePrices(string appId, string baseTerritory, IapBasePrices basePrices, bool verbose)
-//     {
-//         try
-//         {
-//             Console.WriteLine("   -> Restoring IAP Prices...");
-//             Console.WriteLine("   -> Receiving IAP list...");
-//             var appApi = new AppsApi(Service);
-//             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
+        Console.WriteLine("description:");
+        CommandLinesUtils.PrintDescription(Description);
 
-//             var singeIap = Args.GetParameter("--iap", "");
-//             if (!string.IsNullOrEmpty(singeIap))
-//                 iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
+        Console.WriteLine();
+        Console.WriteLine("options:");
 
-//             // for each iap on server - just set default price
-//             var iapPrices = new List<IapPriceSetup>();
-//             foreach (var iap in iaps.Data)
-//             {
-//                 if (!basePrices.TryGetValue(iap.Attributes.ProductId, out var basePrice))
-//                     continue;
+        CommandLinesUtils.PrintOption(
+            "-v",
+            "Include additional verbose output"
+        );
+        // CommandLinesUtils.PrintOption(
+        //     "-l",
+        //     "Include local pricing for all regions"
+        // );
+    }
 
-//                 iapPrices.Add(new IapPriceSetup
-//                 {
-//                     Iap = iap,
-//                     BasePrice = basePrice,
-//                     BaseTerritoryCode = baseTerritory,
-//                 });
-//             }
+    protected override async Task InternalExecuteAsync() => await RestorePrices();
 
-//             await SetPrices(iapPrices, verbose);
+    /// <summary>
+    /// set default prices
+    /// </summary>
+    private async Task RestorePrices()
+    {
+        var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, Config.DefaultPricesFilePath, Args.HasFlag("-v")) ?? new();
 
-//         }
-//         catch (Exception ex)
-//         {
-//             Console.WriteLine(ex);
-//         }
-//     }
+        var verbose = Args.HasFlag("-v");
+        try
+        {
+            Console.WriteLine("   -> Restoring IAP Prices...");
+            Console.WriteLine("   -> Receiving IAP list...");
+            var appApi = new AppsApi(Service);
+            var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId);
 
-//     /// <summary>
-//     /// Set concrete prices
-//     /// </summary>
-//     public async Task SetPrices(List<IapPriceSetup> iapPrices, bool verbose)
-//     {
-//         Console.WriteLine("   -> Settings IAP Prices...");
-//         try
-//         {
-//             foreach (var iap in iapPrices)
-//                 await SetPrices(iap, verbose);
-//         }
-//         catch (Exception ex)
-//         {
-//             Console.WriteLine(ex);
-//         }
-//     }
+            var singeIap = Config.Iap;
 
-//     public override void PrintHelp()
-//     {
-//         Console.WriteLine("restore");
-//         Console.WriteLine("    usage: restore [--app-id {your-app-id}] [--base-territory {territory-code}] [--default-prices {path-to-prices.json}] [--iap {iap-product-id}] [-v]");
-//         Console.WriteLine("    for each iap (NOT subscriptions) set base territory price (app store should recalculate ALL local prices based on 100% base price)");
-//         Console.WriteLine("    --iap  iap product id (foe example crystals_1 or com.company.game.crystals_1)");
-//         Console.WriteLine("        get prices for only one iap product (to not spam your console with data)");
-//     }
+            if (!string.IsNullOrEmpty(singeIap))
+                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
 
-//     private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
-//     {
-//         Console.WriteLine($"   -> Prepare iap price for IAP: {iapSettings.Iap.Attributes.ProductId}.");
+            // for each iap on server - just set default price
+            var iapPrices = new List<IapPriceSetup>();
+            foreach (var iap in iaps.Data)
+            {
+                if (!basePrices.TryGetValue(iap.Attributes.ProductId, out var basePrice))
+                    continue;
 
-//         var manualPrices = new List<InAppPurchasePriceScheduleCreateRequestIncludedInner>();
+                // forcibly adjust price if it is a whole number
+                // to make sure we have marketable price
+                // AUTOMATICALLY how Google Play Console does
+                if (basePrice == Math.Truncate(basePrice))
+                    basePrice -= 0.01m;
 
-//         Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
+                iapPrices.Add(new IapPriceSetup
+                {
+                    Iap = iap,
+                    BasePrice = (double)basePrice,
+                    BaseTerritoryCode = Config.DefaultRegion,
+                });
+            }
 
-//         var basePoint = await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
-//         manualPrices.Add(
-//             CreatePriceEntry(basePoint)
-//         );
+            await SetPrices(iapPrices, verbose);
 
-//         foreach (var territory in iapSettings.LocalPrices)
-//         {
-//             // already set base price
-//             if (territory.Key == iapSettings.BaseTerritoryCode)
-//                 continue;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
 
-//             Console.WriteLine($"   -> Prepare iap price for territory: {territory.Key}.");
+    /// <summary>
+    /// Set concrete prices
+    /// </summary>
+    public async Task SetPrices(List<IapPriceSetup> iapPrices, bool verbose)
+    {
+        Console.WriteLine("   -> Settings IAP Prices...");
+        try
+        {
+            foreach (var iap in iapPrices)
+                await SetPrices(iap, verbose);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
 
-//             var territoryCode = territory.Key;
-//             var targetPrice = territory.Value;
+    private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
+    {
+        Console.WriteLine($"   -> Prepare iap price for IAP: {iapSettings.Iap.Attributes.ProductId}.");
 
-//             var localPoint = await GetClosestPricePointId(iapSettings.Iap, territoryCode, targetPrice, verbose);
+        var manualPrices = new List<InAppPurchasePriceScheduleCreateRequestIncludedInner>();
 
-//             if (localPoint != null)
-//             {
-//                 manualPrices.Add(
-//                     CreatePriceEntry(localPoint)
-//                 );
+        Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
 
-//                 if (verbose)
-//                     Console.WriteLine($" -> Set {territoryCode} to CustomerPrice: {localPoint?.Attributes?.CustomerPrice}");
-//             }
-//         }
+        var basePoint = await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
+        manualPrices.Add(
+            CreatePriceEntry(basePoint)
+        );
 
-//         await PushNewSchedule(iapSettings.Iap, iapSettings.BaseTerritoryCode, manualPrices, verbose);
-//     }
+        foreach (var territory in iapSettings.LocalPrices)
+        {
+            // already set base price
+            if (territory.Key == iapSettings.BaseTerritoryCode)
+                continue;
 
-//     public async Task<InAppPurchasePricePoint?> GetClosestPricePointId(InAppPurchaseV2 iap, string territory, double targetPrice, bool verbose)
-//     {
-//         var iapApi = new InAppPurchasesApi(Service);
+            Console.WriteLine($"   -> Prepare iap price for territory: {territory.Key}.");
 
-//         InAppPurchasePricePoint? lastLowerPoint = null;
+            var territoryCode = territory.Key;
+            var targetPrice = territory.Value;
 
-//         if (verbose)
-//             Console.WriteLine($"Starting search for closest price to {targetPrice} in {territory}...");
+            var localPoint = await GetClosestPricePointId(iapSettings.Iap, territoryCode, targetPrice, verbose);
 
-//         var response = await iapApi.InAppPurchasesV2PricePointsGetToManyRelatedAsync(
-//             iap.Id,
-//             filterTerritory: new List<string> { territory },
-//             limit: 200
-//         );
+            if (localPoint != null)
+            {
+                manualPrices.Add(
+                    CreatePriceEntry(localPoint)
+                );
 
-//         var result = FindBestInPage(response.Data, targetPrice, lastLowerPoint);
+                if (verbose)
+                    Console.WriteLine($" -> Set {territoryCode} to CustomerPrice: {localPoint?.Attributes?.CustomerPrice}");
+            }
+        }
 
-//         if (result.FoundMatch != null)
-//         {
-//             if (verbose)
-//                 Console.WriteLine($"Found: {result.FoundMatch.Attributes.CustomerPrice} (ID: {result.FoundMatch.Id})");
-//             return result.FoundMatch;
-//         }
+        await PushNewSchedule(iapSettings.Iap, iapSettings.BaseTerritoryCode, manualPrices, verbose);
+    }
 
-//         lastLowerPoint = result.LastSeen ?? lastLowerPoint;
+    public async Task<InAppPurchasePricePoint?> GetClosestPricePointId(InAppPurchaseV2 iap, string territory, double targetPrice, bool verbose)
+    {
+        var iapApi = new InAppPurchasesApi(Service);
 
-//         var nextHref = response.Links?.Next;
-//         var page = 1;
+        InAppPurchasePricePoint? lastLowerPoint = null;
 
-//         while (!string.IsNullOrEmpty(nextHref))
-//         {
-//             page++;
+        if (verbose)
+            Console.WriteLine($"Starting search for closest price to {targetPrice} in {territory}...");
 
-//             if (verbose)
-//                 Console.WriteLine($"Fetching Page {page}...");
+        var response = await iapApi.InAppPurchasesV2PricePointsGetToManyRelatedAsync(
+            iap.Id,
+            filterTerritory: new List<string> { territory },
+            limit: 200
+        );
 
-//             try
-//             {
-//                 var nextUri = new Uri(nextHref);
-//                 var relativePath = nextUri.PathAndQuery;
+        var result = FindBestInPage(response.Data, targetPrice, lastLowerPoint);
 
-//                 var requestOptions = new RequestOptions();
+        if (result.FoundMatch != null)
+        {
+            if (verbose)
+                Console.WriteLine($"Found: {result.FoundMatch.Attributes.CustomerPrice} (ID: {result.FoundMatch.Id})");
+            return result.FoundMatch;
+        }
 
-//                 if (!string.IsNullOrEmpty(iapApi.Configuration.AccessToken))
-//                 {
-//                     requestOptions.HeaderParameters.Add("Authorization", "Bearer " + iapApi.Configuration.AccessToken);
-//                 }
+        lastLowerPoint = result.LastSeen ?? lastLowerPoint;
 
-//                 var pageResponseWrapper = await iapApi.AsynchronousClient.GetAsync<InAppPurchasePricePointsResponse>(
-//                     relativePath,
-//                     requestOptions,
-//                     iapApi.Configuration
-//                 );
+        var nextHref = response.Links?.Next;
+        var page = 1;
 
-//                 var pageResponse = pageResponseWrapper.Data;
+        while (!string.IsNullOrEmpty(nextHref))
+        {
+            page++;
 
-//                 if (pageResponse?.Data != null)
-//                 {
-//                     var pageResult = FindBestInPage(pageResponse.Data, targetPrice, lastLowerPoint);
+            if (verbose)
+                Console.WriteLine($"Fetching Page {page}...");
 
-//                     if (pageResult.FoundMatch != null)
-//                     {
-//                         if (verbose)
-//                             Console.WriteLine($"Found on Page {page}: {pageResult.FoundMatch.Attributes.CustomerPrice} (ID: {pageResult.FoundMatch.Id})");
-//                         return pageResult.FoundMatch;
-//                     }
+            try
+            {
+                var nextUri = new Uri(nextHref);
+                var relativePath = nextUri.PathAndQuery;
 
-//                     lastLowerPoint = pageResult.LastSeen ?? lastLowerPoint;
-//                 }
+                var requestOptions = new RequestOptions();
 
-//                 nextHref = pageResponse?.Links?.Next;
-//             }
-//             catch (Exception ex)
-//             {
-//                 if (verbose)
-//                     Console.WriteLine($"Error fetching page {page}: {ex.Message}");
-//                 break;
-//             }
-//         }
+                if (!string.IsNullOrEmpty(iapApi.Configuration.AccessToken))
+                {
+                    requestOptions.HeaderParameters.Add("Authorization", "Bearer " + iapApi.Configuration.AccessToken);
+                }
 
-//         if (lastLowerPoint != null)
-//         {
-//             if (verbose)
-//                 Console.WriteLine($"Target price is higher than max available. Returning max: {lastLowerPoint.Attributes.CustomerPrice}");
-//             return lastLowerPoint;
-//         }
+                var pageResponseWrapper = await iapApi.AsynchronousClient.GetAsync<InAppPurchasePricePointsResponse>(
+                    relativePath,
+                    requestOptions,
+                    iapApi.Configuration
+                );
 
-//         if (verbose)
-//             Console.WriteLine("Search finished. No price found.");
-//         return null;
-//     }
+                var pageResponse = pageResponseWrapper.Data;
 
-//     private (InAppPurchasePricePoint? FoundMatch, InAppPurchasePricePoint? LastSeen) FindBestInPage(
-//         List<InAppPurchasePricePoint> points,
-//         double target,
-//         InAppPurchasePricePoint? previousPageLastItem)
-//     {
-//         if (points == null || points.Count == 0)
-//             return (null, previousPageLastItem);
+                if (pageResponse?.Data != null)
+                {
+                    var pageResult = FindBestInPage(pageResponse.Data, targetPrice, lastLowerPoint);
 
-//         InAppPurchasePricePoint? prev = previousPageLastItem;
+                    if (pageResult.FoundMatch != null)
+                    {
+                        if (verbose)
+                            Console.WriteLine($"Found on Page {page}: {pageResult.FoundMatch.Attributes.CustomerPrice} (ID: {pageResult.FoundMatch.Id})");
+                        return pageResult.FoundMatch;
+                    }
 
-//         foreach (var current in points)
-//         {
-//             if (double.TryParse(current.Attributes.CustomerPrice, NumberStyles.Any, CultureInfo.InvariantCulture, out double currentPrice))
-//             {
-//                 // Якщо поточна ціна перевищила або дорівнює цілі -> ми знайшли точку перетину
-//                 if (currentPrice >= target)
-//                 {
-//                     // Якщо це найперший елемент взагалі (немає попереднього), то він і є найближчим
-//                     if (prev == null) return (current, current);
+                    lastLowerPoint = pageResult.LastSeen ?? lastLowerPoint;
+                }
 
-//                     // Якщо є попередній, дивимось, хто ближче до цілі
-//                     if (double.TryParse(prev.Attributes.CustomerPrice, NumberStyles.Any, CultureInfo.InvariantCulture, out double prevPrice))
-//                     {
-//                         double diffPrev = Math.Abs(target - prevPrice);    // Наприклад |10 - 9| = 1
-//                         double diffCurr = Math.Abs(currentPrice - target); // Наприклад |12 - 10| = 2
+                nextHref = pageResponse?.Links?.Next;
+            }
+            catch (Exception ex)
+            {
+                if (verbose)
+                    Console.WriteLine($"Error fetching page {page}: {ex.Message}");
+                break;
+            }
+        }
 
-//                         // Повертаємо того, у кого різниця менша
-//                         return (diffPrev < diffCurr ? prev : current, current);
-//                     }
+        if (lastLowerPoint != null)
+        {
+            if (verbose)
+                Console.WriteLine($"Target price is higher than max available. Returning max: {lastLowerPoint.Attributes.CustomerPrice}");
+            return lastLowerPoint;
+        }
 
-//                     return (current, current);
-//                 }
-//             }
-//             // Оновлюємо "попередній", бо ми йдемо далі
-//             prev = current;
-//         }
+        if (verbose)
+            Console.WriteLine("Search finished. No price found.");
+        return null;
+    }
 
-//         // Якщо ми дійшли сюди, значить на цій сторінці всі ціни менші за target.
-//         // Повертаємо match = null, але оновлюємо LastSeen
-//         return (null, prev);
-//     }
+    private (InAppPurchasePricePoint? FoundMatch, InAppPurchasePricePoint? LastSeen) FindBestInPage(
+        List<InAppPurchasePricePoint> points,
+        double target,
+        InAppPurchasePricePoint? previousPageLastItem)
+    {
+        if (points == null || points.Count == 0)
+            return (null, previousPageLastItem);
 
-//     private InAppPurchasePriceScheduleCreateRequestIncludedInner CreatePriceEntry(InAppPurchasePricePoint pricePoint)
-//     {
-//         var pricePointRelData = new InAppPurchasePriceRelationshipsInAppPurchasePricePointData(
-//             type: InAppPurchasePriceRelationshipsInAppPurchasePricePointData.TypeEnum.InAppPurchasePricePoints,
-//             id: pricePoint.Id
-//         );
-//         var pricePointRel = new InAppPurchasePriceRelationshipsInAppPurchasePricePoint(
-//             data: pricePointRelData
-//         );
-//         var attributes = new InAppPurchasePriceInlineCreateAttributes(startDate: null);
-//         var relationships = new InAppPurchasePriceInlineCreateRelationships(
-//             inAppPurchasePricePoint: pricePointRel
-//         );
-//         var priceInlineCreate = new InAppPurchasePriceInlineCreate(
-//             type: InAppPurchasePriceInlineCreate.TypeEnum.InAppPurchasePrices,
-//             attributes: attributes,
-//             relationships: relationships
-//         )
-//         {
-//             Id = "${" + Guid.NewGuid().ToString() + "}"
-//         };
-//         return new InAppPurchasePriceScheduleCreateRequestIncludedInner(priceInlineCreate);
-//     }
+        InAppPurchasePricePoint? prev = previousPageLastItem;
 
-//     private async Task PushNewSchedule(InAppPurchaseV2 iap, string baseTerritoryId, List<InAppPurchasePriceScheduleCreateRequestIncludedInner> prices, bool verbose)
-//     {
-//         var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
+        foreach (var current in points)
+        {
+            if (double.TryParse(current.Attributes.CustomerPrice, NumberStyles.Any, CultureInfo.InvariantCulture, out double currentPrice))
+            {
+                // Якщо поточна ціна перевищила або дорівнює цілі -> ми знайшли точку перетину
+                if (currentPrice >= target)
+                {
+                    // Якщо це найперший елемент взагалі (немає попереднього), то він і є найближчим
+                    if (prev == null) return (current, current);
 
-//         var relationships = new InAppPurchasePriceScheduleCreateRequestDataRelationships(
-//             inAppPurchase: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
-//                 data: new(
-//                     id: iap.Id,
-//                     type: AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases
-//                 )
-//             ),
-//             baseTerritory: new AppPriceScheduleCreateRequestDataRelationshipsBaseTerritory(
-//                 data: new(
-//                     id: baseTerritoryId,
-//                     type: AppPricePointV3RelationshipsTerritoryData.TypeEnum.Territories
-//                 )
-//             ),
-//             manualPrices: new InAppPurchasePriceScheduleCreateRequestDataRelationshipsManualPrices(
-//                 data: prices.Select(p =>
-//                     new InAppPurchasePriceScheduleRelationshipsManualPricesDataInner(
-//                         type: InAppPurchasePriceScheduleRelationshipsManualPricesDataInner.TypeEnum.InAppPurchasePrices,
-//                         id: p.GetInAppPurchasePriceInlineCreate().Id
-//                     )
-//                 ).ToList()
-//             )
-//         );
+                    // Якщо є попередній, дивимось, хто ближче до цілі
+                    if (double.TryParse(prev.Attributes.CustomerPrice, NumberStyles.Any, CultureInfo.InvariantCulture, out double prevPrice))
+                    {
+                        double diffPrev = Math.Abs(target - prevPrice);    // Наприклад |10 - 9| = 1
+                        double diffCurr = Math.Abs(currentPrice - target); // Наприклад |12 - 10| = 2
 
-//         var request = new InAppPurchasePriceScheduleCreateRequest(
-//             data: new InAppPurchasePriceScheduleCreateRequestData(
-//                 type: InAppPurchasePriceScheduleCreateRequestData.TypeEnum.InAppPurchasePriceSchedules,
-//                 relationships: relationships
-//             ),
-//             included: prices
-//         );
+                        // Повертаємо того, у кого різниця менша
+                        return (diffPrev < diffCurr ? prev : current, current);
+                    }
 
-//         Console.WriteLine($"Sending Create Schedule Request for {iap.Attributes.ProductId} ...");
+                    return (current, current);
+                }
+            }
+            // Оновлюємо "попередній", бо ми йдемо далі
+            prev = current;
+        }
 
-//         try
-//         {
-//             var response = await schedulesApi.InAppPurchasePriceSchedulesCreateInstanceAsync(request);
+        // Якщо ми дійшли сюди, значить на цій сторінці всі ціни менші за target.
+        // Повертаємо match = null, але оновлюємо LastSeen
+        return (null, prev);
+    }
 
-//             if (verbose)
-//             {
-//                 Console.WriteLine($"[SUCCESS] Schedule created successfully!");
-//                 Console.WriteLine($"   -> New Schedule ID: {response.Data.Id}");
-//                 Console.WriteLine($"   -> Link: {response.Data.Links.Self}");
+    private InAppPurchasePriceScheduleCreateRequestIncludedInner CreatePriceEntry(InAppPurchasePricePoint pricePoint)
+    {
+        var pricePointRelData = new InAppPurchasePriceRelationshipsInAppPurchasePricePointData(
+            type: InAppPurchasePriceRelationshipsInAppPurchasePricePointData.TypeEnum.InAppPurchasePricePoints,
+            id: pricePoint.Id
+        );
+        var pricePointRel = new InAppPurchasePriceRelationshipsInAppPurchasePricePoint(
+            data: pricePointRelData
+        );
+        var attributes = new InAppPurchasePriceInlineCreateAttributes(startDate: null);
+        var relationships = new InAppPurchasePriceInlineCreateRelationships(
+            inAppPurchasePricePoint: pricePointRel
+        );
+        var priceInlineCreate = new InAppPurchasePriceInlineCreate(
+            type: InAppPurchasePriceInlineCreate.TypeEnum.InAppPurchasePrices,
+            attributes: attributes,
+            relationships: relationships
+        )
+        {
+            Id = "${" + Guid.NewGuid().ToString() + "}"
+        };
+        return new InAppPurchasePriceScheduleCreateRequestIncludedInner(priceInlineCreate);
+    }
 
-//                 if (response.Included != null)
-//                     Console.WriteLine($"   -> Included items count: {response.Included.Count}");
-//             }
-//         }
-//         catch (ApiException ex)
-//         {
-//             Console.WriteLine($"[API ERROR] {ex.Message}");
-//             Console.WriteLine($"Status: {ex.ErrorCode}");
-//             Console.WriteLine($"Response Body: {ex.ErrorContent}");
-//         }
-//         catch (Exception ex)
-//         {
-//             Console.WriteLine($"[ERROR] {ex.Message}");
-//         }
-//     }
-// }
+    private async Task PushNewSchedule(InAppPurchaseV2 iap, string baseTerritoryId, List<InAppPurchasePriceScheduleCreateRequestIncludedInner> prices, bool verbose)
+    {
+        var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
+
+        var relationships = new InAppPurchasePriceScheduleCreateRequestDataRelationships(
+            inAppPurchase: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
+                data: new(
+                    id: iap.Id,
+                    type: AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases
+                )
+            ),
+            baseTerritory: new AppPriceScheduleCreateRequestDataRelationshipsBaseTerritory(
+                data: new(
+                    id: baseTerritoryId,
+                    type: AppPricePointV3RelationshipsTerritoryData.TypeEnum.Territories
+                )
+            ),
+            manualPrices: new InAppPurchasePriceScheduleCreateRequestDataRelationshipsManualPrices(
+                data: prices.Select(p =>
+                    new InAppPurchasePriceScheduleRelationshipsManualPricesDataInner(
+                        type: InAppPurchasePriceScheduleRelationshipsManualPricesDataInner.TypeEnum.InAppPurchasePrices,
+                        id: p.GetInAppPurchasePriceInlineCreate().Id
+                    )
+                ).ToList()
+            )
+        );
+
+        var request = new InAppPurchasePriceScheduleCreateRequest(
+            data: new InAppPurchasePriceScheduleCreateRequestData(
+                type: InAppPurchasePriceScheduleCreateRequestData.TypeEnum.InAppPurchasePriceSchedules,
+                relationships: relationships
+            ),
+            included: prices
+        );
+
+        Console.WriteLine($"Sending Create Schedule Request for {iap.Attributes.ProductId} ...");
+
+        try
+        {
+            var response = await schedulesApi.InAppPurchasePriceSchedulesCreateInstanceAsync(request);
+
+            if (verbose)
+            {
+                Console.WriteLine($"[SUCCESS] Schedule created successfully!");
+                Console.WriteLine($"   -> New Schedule ID: {response.Data.Id}");
+                Console.WriteLine($"   -> Link: {response.Data.Links.Self}");
+
+                if (response.Included != null)
+                    Console.WriteLine($"   -> Included items count: {response.Included.Count}");
+            }
+        }
+        catch (ApiException ex)
+        {
+            Console.WriteLine($"[API ERROR] {ex.Message}");
+            Console.WriteLine($"Status: {ex.ErrorCode}");
+            Console.WriteLine($"Response Body: {ex.ErrorContent}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] {ex.Message}");
+        }
+    }
+}
