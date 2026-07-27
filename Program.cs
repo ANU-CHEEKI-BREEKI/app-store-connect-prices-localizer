@@ -5,6 +5,7 @@ var commands = new CommandsCollection()
     new Command_List(),
     new Command_Localize(),
     new Command_Restore(),
+    new Command_CreateIaps(),
 };
 
 if (commands.TryPrintHelp(args))
@@ -51,6 +52,7 @@ var configDirectory = Path.GetDirectoryName(absoluteConfigPath);
 config.PrivateKeyFilePath = Path.Combine(configDirectory, config.PrivateKeyFilePath);
 config.DefaultPricesFilePath = Path.Combine(configDirectory, config.DefaultPricesFilePath);
 config.LocalizedPricesTemplateFilePath = Path.Combine(configDirectory, config.LocalizedPricesTemplateFilePath);
+config.ProductDefinitionsFilePath = Path.Combine(configDirectory, config.ProductDefinitionsFilePath);
 
 
 // patch config with explicit command line options
@@ -59,8 +61,10 @@ config.PrivateKeyFilePath = args.TryGetOption("--private-key", config.PrivateKey
 config.DefaultPricesFilePath = args.TryGetOption("--prices", config.DefaultPricesFilePath);
 
 config.LocalizedPricesTemplateFilePath = args.TryGetOption("--localized-template", config.LocalizedPricesTemplateFilePath);
+config.ProductDefinitionsFilePath = args.TryGetOption("--products", config.ProductDefinitionsFilePath);
 
 config.DefaultRegion = args.TryGetOption("--region", config.DefaultRegion);
+config.DefaultLocale = args.TryGetOption("--locale", config.DefaultLocale);
 config.Iap = args.TryGetOption("--iap", config.Iap);
 // config.DefaultCurrency = args.TryGetOption("--currency", config.DefaultCurrency);
 

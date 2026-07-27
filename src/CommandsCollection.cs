@@ -51,8 +51,16 @@ public class CommandsCollection : List<CommandBase>
             "Specifies path to json with default prices in default currency. If not specified, used path from global config json."
         );
         CommandLinesUtils.PrintOption(
+            "--products <path>",
+            "Specifies path to csv with product definitions, used to create new In-App Purchases. If not specified, used path from global config json."
+        );
+        CommandLinesUtils.PrintOption(
             "--region <region>",
             "Specify the region for which to display prices. Default is US, or region, specified in global config.json"
+        );
+        CommandLinesUtils.PrintOption(
+            "--locale <locale>",
+            "Specify the locale used for In-App Purchase localizations. Default is en-US, or locale specified in global config.json"
         );
         // CommandLinesUtils.PrintOption(
         //     "--currency <currency>",

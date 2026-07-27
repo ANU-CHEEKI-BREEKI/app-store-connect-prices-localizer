@@ -35,8 +35,10 @@ Also you can provide some comand parameters each time calling `localize`, or set
         "AppId": "1234567890", // your app AppleId from App Store Connect App info page
         "DefaultPricesFilePath": "./default-prices.json",
         "LocalizedPricesTemplateFilePath": "",
+        "ProductDefinitionsFilePath": "./product-definitions.csv",
         
         "DefaultRegion": "USA",
+        "DefaultLocale": "en-US",
         "Iap": ""
     }
 
@@ -158,6 +160,49 @@ There are a away to [manage requests rate limits](https://developer.apple.com/do
     options:
     -v                           Include additional verbose output
     -l                           Include local pricing for all regions
+
+- 
+
+    create-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [-v]
+
+
+    description:
+            Creates In-App Purchases in App Store Connect from the product
+            definitions csv. Products that already exist are not re-created.
+            Every created product gets a localization (en-US by default), is made
+            available in all territories, and receives its base price from the
+            'default_price' column.
+            If a product with the same product id already exists, it is skipped: it
+            is never re-created and its prices are never touched. Only a missing
+            localization or a missing availability is added to it.
+            The csv separator is detected automatically, both ';' and ',' are
+            supported.
+
+    options:
+    --products <path>            Specifies path to csv with product definitions. If not specified,
+                                used path from global config json.
+    --locale <locale>            Locale of the created localization. Default is en-US, or locale
+                                specified in global config.json
+    -v                           Include additional verbose output
+
+---
+
+### Declaring products to create
+
+`create-iaps` reads products from the csv pointed to by `ProductDefinitionsFilePath` (or `--products`).
+
+    product_id;reference_name;type;default_price;localized_title;localized_description
+    com.YourCompany.YourGame.no_ads;no_ads;non-consumable;5;Disable annoying ads;Disable annoying ads
+    com.YourCompany.YourGame.crystals_1;crystals_1;consumable;1;Tiny of Gems;Tiny of Gems
+
+- `type` is one of `consumable`, `non-consumable`, `non-renewing-subscription`
+- `default_price` is the price in your `DefaultRegion`, and `0.01` is subtracted from round prices automatically, just like in `restore`
+- columns are matched by their header name, so their order does not matter
+- the separator is detected automatically, so a table exported from macOS Numbers / Excel / Google Sheets works as is, with either `;` or `,`
+- a title line above the header (like the sheet name Numbers exports) and quoted cells containing separators are handled
+
+Products are created as **available in all countries and regions**, with `en-US` localization by default.
+Rerunning the command is safe: products that already exist are skipped and their prices are left alone.
 
 ---
 
