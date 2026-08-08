@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using AppStoreConnect.Net.Api;
+using AppStoreConnect.Net.Client;
 using AppStoreConnect.Net.Model;
 
 /// <summary>
@@ -213,10 +214,15 @@ public abstract class AppMetadataCommandBase : CommandBase
 
     protected async Task<List<AppStoreVersionLocalization>> GetVersionLocalizationsAsync(string versionId, bool verbose)
     {
-        var response = await new AppStoreVersionsApi(Service)
-            .AppStoreVersionsAppStoreVersionLocalizationsGetToManyRelatedAsync(versionId, limit: 200);
-
-        var localizations = response.Data ?? new();
+        var api = new AppStoreVersionsApi(Service);
+        var localizations = await FetchAllPagesAsync<AppStoreVersionLocalizationsResponse, AppStoreVersionLocalization>(
+            api.AsynchronousClient,
+            api.Configuration,
+            () => api.AppStoreVersionsAppStoreVersionLocalizationsGetToManyRelatedAsync(versionId, limit: 200),
+            r => r.Data,
+            r => r.Links?.Next,
+            verbose
+        );
 
         if (verbose)
             Console.WriteLine($"   -> {localizations.Count} version localizations.");
@@ -226,15 +232,83 @@ public abstract class AppMetadataCommandBase : CommandBase
 
     protected async Task<List<AppInfoLocalization>> GetAppInfoLocalizationsAsync(string appInfoId, bool verbose)
     {
-        var response = await new AppInfosApi(Service)
-            .AppInfosAppInfoLocalizationsGetToManyRelatedAsync(appInfoId, limit: 200);
-
-        var localizations = response.Data ?? new();
+        var api = new AppInfosApi(Service);
+        var localizations = await FetchAllPagesAsync<AppInfoLocalizationsResponse, AppInfoLocalization>(
+            api.AsynchronousClient,
+            api.Configuration,
+            () => api.AppInfosAppInfoLocalizationsGetToManyRelatedAsync(appInfoId, limit: 200),
+            r => r.Data,
+            r => r.Links?.Next,
+            verbose
+        );
 
         if (verbose)
             Console.WriteLine($"   -> {localizations.Count} app info localizations.");
 
         return localizations;
+    }
+
+    protected async Task<List<TItem>> FetchAllPagesAsync<TResponse, TItem>(
+        IAsynchronousClient asyncClient,
+        IReadableConfiguration configuration,
+        Func<Task<TResponse>> firstPageFetcher,
+        Func<TResponse, List<TItem>?> itemsExtractor,
+        Func<TResponse, string?> nextLinkExtractor,
+        bool verbose)
+        where TResponse : class
+    {
+        var result = new List<TItem>();
+        var response = await firstPageFetcher();
+        if (response is null)
+            return result;
+
+        var items = itemsExtractor(response);
+        if (items is not null)
+            result.AddRange(items);
+
+        var nextHref = nextLinkExtractor(response);
+        while (!string.IsNullOrEmpty(nextHref))
+        {
+            try
+            {
+                var nextUri = new Uri(nextHref);
+                var relativePath = nextUri.PathAndQuery;
+
+                var requestOptions = new RequestOptions();
+                if (!string.IsNullOrEmpty(configuration.AccessToken))
+                {
+                    requestOptions.HeaderParameters.Add("Authorization", "Bearer " + configuration.AccessToken);
+                }
+
+                var pageWrapper = await asyncClient.GetAsync<TResponse>(
+                    relativePath,
+                    requestOptions,
+                    configuration
+                );
+
+                var pageData = pageWrapper.Data;
+                if (pageData is not null)
+                {
+                    var pageItems = itemsExtractor(pageData);
+                    if (pageItems is not null)
+                        result.AddRange(pageItems);
+
+                    nextHref = nextLinkExtractor(pageData);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (verbose)
+                    Console.WriteLine($"[WARN] error fetching next page: {ex.Message}");
+                break;
+            }
+        }
+
+        return result;
     }
 
     /// <summary>

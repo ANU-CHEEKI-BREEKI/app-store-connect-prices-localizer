@@ -123,6 +123,11 @@ public class Command_CreateAllLocales : AppMetadataCommandBase
                                 target.AppInfoLocalizations.Add(response.Data);
                                 createdAppInfo.Add(locale);
                             }
+                            catch (AppStoreConnect.Net.Client.ApiException apiEx) when (apiEx.ErrorCode == 409 || apiEx.ErrorContent?.ToString()?.Contains("DUPLICATE") == true)
+                            {
+                                Console.WriteLine($"      [EXISTS] App Info localization for {locale}");
+                                skippedAppInfo.Add(locale);
+                            }
                             catch (Exception ex)
                             {
                                 PrintApiError($"failed to create app info localization for {locale}", ex);
@@ -176,6 +181,11 @@ public class Command_CreateAllLocales : AppMetadataCommandBase
                             var response = await new AppStoreVersionLocalizationsApi(Service).AppStoreVersionLocalizationsCreateInstanceAsync(request);
                             target.VersionLocalizations.Add(response.Data);
                             createdVersion.Add(locale);
+                        }
+                        catch (AppStoreConnect.Net.Client.ApiException apiEx) when (apiEx.ErrorCode == 409 || apiEx.ErrorContent?.ToString()?.Contains("DUPLICATE") == true)
+                        {
+                            Console.WriteLine($"      [EXISTS] Version localization for {locale}");
+                            skippedVersion.Add(locale);
                         }
                         catch (Exception ex)
                         {
