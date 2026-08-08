@@ -1,4 +1,4 @@
-﻿using AppStoreConnect.Net.Client;
+using AppStoreConnect.Net.Client;
 
 var commands = new CommandsCollection()
 {
@@ -9,6 +9,7 @@ var commands = new CommandsCollection()
     new Command_ExportMetadata(),
     new Command_ImportMetadata(),
     new Command_CopyPromoText(),
+    new Command_CreateAllLocales(),
 };
 
 if (commands.TryPrintHelp(args))

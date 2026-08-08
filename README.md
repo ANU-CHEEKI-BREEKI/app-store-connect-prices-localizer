@@ -291,6 +291,13 @@ Without a path argument the table is read from / written next to your `config.js
     -n                           Dry run: print everything that would change, without writing.
     -v                           Include additional verbose output
 
+- 
+
+    create-all-locales [--version <x.y.z>] [-n] [-v]
+
+    Creates all 39 App Store Connect supported localizations on the editable version and app info page.
+    Uses existing primary locale texts as initial values so that 'export-metadata' can produce a full table with columns for all supported languages.
+
 ---
 
 ### Promotional Text and new versions
@@ -313,4 +320,5 @@ takes the Promotional Text of every locale from the previous version and writes 
     -v                           Include additional verbose output
 
 ---
+
 
