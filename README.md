@@ -264,7 +264,7 @@ The App Store has its own locale codes, and a translation table usually carries 
 
 When the app already has a localization for that language, **the app wins** — a `pt` column goes into the `pt-BR` page you already maintain instead of creating a second Portuguese. Otherwise the App Store default is used (`es` → `es-ES`, `fr` → `fr-FR`, `ar` → `ar-SA`, ...).
 
-The App Store only shows product pages in ~39 languages, so a column for anything else (Bengali, Bulgarian, Estonian, Albanian, Bosnian, Filipino, Irish, Latvian, Lithuanian, Nepali, Serbian, Slovenian, Persian, ...) is **skipped with a warning and no request at all**. The list lives in `src/AppStoreLocales.cs` if Apple ever adds one.
+The App Store only shows product pages in 50 languages, so a column for anything else (Bulgarian, Estonian, Albanian, Bosnian, Filipino, Irish, Latvian, Lithuanian, Nepali, Serbian, Persian, ...) is **skipped with a warning and no request at all**. The list lives in `src/AppStoreLocales.cs` if Apple ever adds one.
 
 - values that already match App Store Connect are not re-sent, so re-running after a partial failure is cheap
 - a text longer than the field limit is skipped with a warning instead of failing the whole locale
@@ -295,7 +295,7 @@ Without a path argument the table is read from / written next to your `config.js
 
     create-all-locales [--version <x.y.z>] [-n] [-v]
 
-    Creates all 39 App Store Connect supported localizations on the editable version and app info page.
+    Creates all 50 App Store Connect supported localizations on the editable version and app info page.
     Uses existing primary locale texts as initial values so that 'export-metadata' can produce a full table with columns for all supported languages.
 
 ---

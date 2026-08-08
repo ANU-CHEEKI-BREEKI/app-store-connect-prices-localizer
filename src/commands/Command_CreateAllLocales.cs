@@ -2,14 +2,14 @@ using AppStoreConnect.Net.Api;
 using AppStoreConnect.Net.Model;
 
 /// <summary>
-/// Creates all 39 App Store Connect supported localizations on the editable version and app info page.
+/// Creates all 50 App Store Connect supported localizations on the editable version and app info page.
 /// Uses existing primary locale texts as initial values so that every language exists on App Store Connect,
 /// allowing 'export-metadata' to produce a full table with columns for all supported languages.
 /// </summary>
 public class Command_CreateAllLocales : AppMetadataCommandBase
 {
     public override string Name => "create-all-locales";
-    public override string Description => "Creates all 39 App Store Connect supported localizations for the app store version and app information page using existing texts as template.";
+    public override string Description => "Creates all 50 App Store Connect supported localizations for the app store version and app information page using existing texts as template.";
 
     public override void PrintHelp()
     {
@@ -19,8 +19,8 @@ public class Command_CreateAllLocales : AppMetadataCommandBase
 
         Console.WriteLine("description:");
         CommandLinesUtils.PrintDescription(Description);
-        CommandLinesUtils.PrintDescription("Populates missing localizations across all 39 supported App Store Connect locales using existing primary locale texts.");
-        CommandLinesUtils.PrintDescription("After running this command, 'export-metadata' will output columns for all 39 languages supported by the App Store.");
+        CommandLinesUtils.PrintDescription("Populates missing localizations across all 50 supported App Store Connect locales using existing primary locale texts.");
+        CommandLinesUtils.PrintDescription("After running this command, 'export-metadata' will output columns for all 50 languages supported by the App Store.");
 
         Console.WriteLine();
         Console.WriteLine("options:");

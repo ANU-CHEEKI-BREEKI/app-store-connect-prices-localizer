@@ -3,16 +3,21 @@
 /// actually be shown in. A translation table normally carries plain language codes ('pt', 'de', 'zh'),
 /// so they have to be mapped before anything is sent: an unmapped code is not a failed write,
 /// it is two failed writes and a language silently missing from the store page.
+///
+/// As of 2026, Apple supports 50 languages for app metadata localizations.
+/// See https://developer.apple.com/help/app-store-connect/reference/app-store-localizations/
+/// and https://developer.apple.com/documentation/appstoreconnectapi/managing-metadata-in-your-app-by-using-locale-shortcodes
 /// </summary>
 public static class AppStoreLocales
 {
-    /// <summary>every locale an app store product page can be localized into</summary>
+    /// <summary>every locale an app store product page can be localized into (50 total)</summary>
     public static readonly string[] Supported =
     {
-        "ar-SA", "ca", "cs", "da", "de-DE", "el", "en-AU", "en-CA", "en-GB", "en-US",
-        "es-ES", "es-MX", "fi", "fr-CA", "fr-FR", "he", "hi", "hr", "hu", "id",
-        "it", "ja", "ko", "ms", "nl-NL", "no", "pl", "pt-BR", "pt-PT", "ro",
-        "ru", "sk", "sv", "th", "tr", "uk", "vi", "zh-Hans", "zh-Hant",
+        "ar-SA", "bn-BD", "ca", "cs", "da", "de-DE", "el", "en-AU", "en-CA", "en-GB",
+        "en-US", "es-ES", "es-MX", "fi", "fr-CA", "fr-FR", "gu-IN", "he", "hi", "hr",
+        "hu", "id", "it", "ja", "kn-IN", "ko", "ml-IN", "mr-IN", "ms", "nl-NL",
+        "no", "or-IN", "pa-IN", "pl", "pt-BR", "pt-PT", "ro", "ru", "sk", "sl-SI",
+        "sv", "ta-IN", "te-IN", "th", "tr", "uk", "ur-PK", "vi", "zh-Hans", "zh-Hant",
     };
 
     /// <summary>
@@ -22,12 +27,23 @@ public static class AppStoreLocales
     private static readonly Dictionary<string, string> Defaults = new(StringComparer.OrdinalIgnoreCase)
     {
         ["ar"] = "ar-SA",
+        ["bn"] = "bn-BD",
         ["de"] = "de-DE",
         ["en"] = "en-US",
         ["es"] = "es-ES",
         ["fr"] = "fr-FR",
+        ["gu"] = "gu-IN",
+        ["kn"] = "kn-IN",
+        ["ml"] = "ml-IN",
+        ["mr"] = "mr-IN",
         ["nl"] = "nl-NL",
+        ["or"] = "or-IN",
+        ["pa"] = "pa-IN",
         ["pt"] = "pt-BR",
+        ["sl"] = "sl-SI",
+        ["ta"] = "ta-IN",
+        ["te"] = "te-IN",
+        ["ur"] = "ur-PK",
         ["zh"] = "zh-Hans",
         ["zh-CN"] = "zh-Hans",
         ["zh-TW"] = "zh-Hant",
