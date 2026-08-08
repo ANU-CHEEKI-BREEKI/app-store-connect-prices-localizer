@@ -59,10 +59,21 @@ public class Command_ExportMetadata : AppMetadataCommandBase
                 return;
             }
 
-            Console.WriteLine($"   -> found {locales.Count} locales: {string.Join(", ", locales)}");
+            // source locales go first (in the order specified in config), then the rest alphabetically
+            var sourceLocales = Config.SourceLocales
+                .Where(s => locales.Any(l => string.Equals(l, s, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            var sortedLocales = sourceLocales
+                .Concat(locales.Where(l => !sourceLocales.Any(s => string.Equals(s, l, StringComparison.OrdinalIgnoreCase))))
+                .ToList();
+
+            Console.WriteLine($"   -> found {sortedLocales.Count} locales: {string.Join(", ", sortedLocales)}");
+            if (sourceLocales.Count > 0)
+                Console.WriteLine($"   -> source locales first: {string.Join(", ", sourceLocales)}");
 
             var headers = new List<string> { KeyColumn, IdColumn, CommentsColumn };
-            headers.AddRange(locales.Select(LocaleColumnName));
+            headers.AddRange(sortedLocales.Select(LocaleColumnName));
 
             var rows = new List<List<string>>();
             foreach (var field in Fields)
@@ -70,7 +81,7 @@ public class Command_ExportMetadata : AppMetadataCommandBase
                 // the Id column is what the translation tooling uses to keep rows stable between exports
                 var row = new List<string> { field.Key, field.Key, field.Comment };
 
-                foreach (var locale in locales)
+                foreach (var locale in sortedLocales)
                 {
                     var value = GetValue(
                         field,
@@ -86,7 +97,7 @@ public class Command_ExportMetadata : AppMetadataCommandBase
                 if (verbose)
                 {
                     var filled = row.Skip(3).Count(c => !string.IsNullOrWhiteSpace(c));
-                    Console.WriteLine($"      {field.Key,-20} filled for {filled}/{locales.Count} locales");
+                    Console.WriteLine($"      {field.Key,-20} filled for {filled}/{sortedLocales.Count} locales");
                 }
             }
 
@@ -101,7 +112,7 @@ public class Command_ExportMetadata : AppMetadataCommandBase
             Console.WriteLine("summary:");
             Console.WriteLine($"   version: {target.VersionString}");
             Console.WriteLine($"   fields:  {Fields.Length}");
-            Console.WriteLine($"   locales: {locales.Count}");
+            Console.WriteLine($"   locales: {sortedLocales.Count}");
             Console.WriteLine($"   written: {Path.GetFullPath(path)}");
         }
         catch (Exception ex)

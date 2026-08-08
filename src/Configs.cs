@@ -13,6 +13,12 @@ public class Config
     public string ProductDefinitionsFilePath { get; set; } = "";
     public string AppMetadataFilePath { get; set; } = "";
 
+    /// <summary>
+    /// locale codes of the source/original languages used for translation (e.g. ["en-US", "uk"]).
+    /// export-metadata places these columns first in the csv so translators see the originals on the left
+    /// </summary>
+    public List<string> SourceLocales { get; set; } = new();
+
     /// <summary>where config.json was found, the fallback location for the app metadata csv</summary>
     [JsonIgnore]
     public string ConfigDirectory { get; set; } = "";
