@@ -41,6 +41,18 @@ public static class CommandLinesUtils
     }
 
     /// <summary>
+    /// a parsed csv: the header row as it was written, and the data rows keyed by header name
+    /// </summary>
+    public class CsvTable
+    {
+        /// <summary>original, non lowercased header names, so things like locale codes keep their casing</summary>
+        public List<string> Headers { get; set; } = new();
+
+        /// <summary>every row is a map of "header name" -> "cell value", the lookup is case insensitive</summary>
+        public List<Dictionary<string, string>> Rows { get; set; } = new();
+    }
+
+    /// <summary>
     /// Loads a csv file as a list of rows, where each row is a map of "header name" -> "cell value".
     ///
     /// Tolerates the way spreadsheet apps (macos Numbers, Excel, Google Sheets) export tables:
@@ -49,6 +61,12 @@ public static class CommandLinesUtils
     /// - quoted cells are unwrapped, including embedded separators, newlines and doubled quotes ("")
     /// </summary>
     public static async Task<List<Dictionary<string, string>>> LoadCsv(string path, string fallbackPath, bool logToConsole)
+        => (await LoadCsvTable(path, fallbackPath, logToConsole)).Rows;
+
+    /// <summary>
+    /// same as <see cref="LoadCsv"/>, but also gives back the header row with its original casing
+    /// </summary>
+    public static async Task<CsvTable> LoadCsvTable(string path, string fallbackPath, bool logToConsole)
     {
         var resolvedPath = path;
 
@@ -71,9 +89,9 @@ public static class CommandLinesUtils
         if (headerIndex < 0)
             return new();
 
-        var header = rows[headerIndex].Select(h => h.Trim().ToLowerInvariant()).ToList();
+        var header = rows[headerIndex].Select(h => h.Trim()).ToList();
 
-        var result = new List<Dictionary<string, string>>();
+        var table = new CsvTable { Headers = header };
         for (int i = headerIndex + 1; i < rows.Count; i++)
         {
             var cells = rows[i];
@@ -82,14 +100,36 @@ public static class CommandLinesUtils
             if (cells.All(string.IsNullOrWhiteSpace))
                 continue;
 
-            var row = new Dictionary<string, string>();
+            var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (int c = 0; c < header.Count; c++)
                 row[header[c]] = c < cells.Count ? cells[c].Trim() : "";
 
-            result.Add(row);
+            table.Rows.Add(row);
         }
 
-        return result;
+        return table;
+    }
+
+    /// <summary>
+    /// Writes a csv that spreadsheet apps and the translation tooling both read back as is.
+    /// every cell is quoted, so separators and newlines inside descriptions survive the round trip
+    /// </summary>
+    public static async Task SaveCsv(string path, List<string> headers, List<List<string>> rows, char separator = ',')
+    {
+        var builder = new System.Text.StringBuilder();
+
+        builder.AppendLine(string.Join(separator, headers.Select(Quote)));
+
+        foreach (var row in rows)
+            builder.AppendLine(string.Join(separator, row.Select(Quote)));
+
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (!string.IsNullOrEmpty(directory))
+            Directory.CreateDirectory(directory);
+
+        await File.WriteAllTextAsync(path, builder.ToString());
+
+        static string Quote(string cell) => $"\"{(cell ?? "").Replace("\"", "\"\"")}\"";
     }
 
     /// <summary>

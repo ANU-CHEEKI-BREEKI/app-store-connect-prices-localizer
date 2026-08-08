@@ -1,4 +1,5 @@
 using AppStoreConnect.Net.Model;
+using Newtonsoft.Json;
 
 public class Config
 {
@@ -10,6 +11,11 @@ public class Config
     public string DefaultPricesFilePath { get; set; } = "";
     public string LocalizedPricesTemplateFilePath { get; set; } = "";
     public string ProductDefinitionsFilePath { get; set; } = "";
+    public string AppMetadataFilePath { get; set; } = "";
+
+    /// <summary>where config.json was found, the fallback location for the app metadata csv</summary>
+    [JsonIgnore]
+    public string ConfigDirectory { get; set; } = "";
 
     public string DefaultRegion { get; set; } = "USA";
     public string DefaultLocale { get; set; } = "en-US";

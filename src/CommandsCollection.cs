@@ -55,6 +55,10 @@ public class CommandsCollection : List<CommandBase>
             "Specifies path to csv with product definitions, used to create new In-App Purchases. If not specified, used path from global config json."
         );
         CommandLinesUtils.PrintOption(
+            "--metadata <path>",
+            "Specifies path to the csv with the localizable texts of the app store product page. If not specified, the csv is read from / written next to your config.json."
+        );
+        CommandLinesUtils.PrintOption(
             "--region <region>",
             "Specify the region for which to display prices. Default is US, or region, specified in global config.json"
         );

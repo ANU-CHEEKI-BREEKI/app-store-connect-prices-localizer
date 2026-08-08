@@ -6,6 +6,9 @@ var commands = new CommandsCollection()
     new Command_Localize(),
     new Command_Restore(),
     new Command_CreateIaps(),
+    new Command_ExportMetadata(),
+    new Command_ImportMetadata(),
+    new Command_CopyPromoText(),
 };
 
 if (commands.TryPrintHelp(args))
@@ -49,10 +52,15 @@ if (config is null)
 var absoluteConfigPath = Path.GetFullPath(resolvedPathGetter.ResolvedPath);
 var configDirectory = Path.GetDirectoryName(absoluteConfigPath);
 
+config.ConfigDirectory = configDirectory;
 config.PrivateKeyFilePath = Path.Combine(configDirectory, config.PrivateKeyFilePath);
 config.DefaultPricesFilePath = Path.Combine(configDirectory, config.DefaultPricesFilePath);
 config.LocalizedPricesTemplateFilePath = Path.Combine(configDirectory, config.LocalizedPricesTemplateFilePath);
 config.ProductDefinitionsFilePath = Path.Combine(configDirectory, config.ProductDefinitionsFilePath);
+
+// an unset metadata path has to stay unset, so the command can fall back to the config directory itself
+if (!string.IsNullOrWhiteSpace(config.AppMetadataFilePath))
+    config.AppMetadataFilePath = Path.Combine(configDirectory, config.AppMetadataFilePath);
 
 
 // patch config with explicit command line options
@@ -62,6 +70,7 @@ config.DefaultPricesFilePath = args.TryGetOption("--prices", config.DefaultPrice
 
 config.LocalizedPricesTemplateFilePath = args.TryGetOption("--localized-template", config.LocalizedPricesTemplateFilePath);
 config.ProductDefinitionsFilePath = args.TryGetOption("--products", config.ProductDefinitionsFilePath);
+config.AppMetadataFilePath = args.TryGetOption("--metadata", config.AppMetadataFilePath);
 
 config.DefaultRegion = args.TryGetOption("--region", config.DefaultRegion);
 config.DefaultLocale = args.TryGetOption("--locale", config.DefaultLocale);

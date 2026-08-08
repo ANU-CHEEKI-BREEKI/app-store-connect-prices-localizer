@@ -36,6 +36,7 @@ Also you can provide some comand parameters each time calling `localize`, or set
         "DefaultPricesFilePath": "./default-prices.json",
         "LocalizedPricesTemplateFilePath": "",
         "ProductDefinitionsFilePath": "./product-definitions.csv",
+        "AppMetadataFilePath": "",
         
         "DefaultRegion": "USA",
         "DefaultLocale": "en-US",
@@ -203,6 +204,113 @@ There are a away to [manage requests rate limits](https://developer.apple.com/do
 
 Products are created as **available in all countries and regions**, with `en-US` localization by default.
 Rerunning the command is safe: products that already exist are skipped and their prices are left alone.
+
+---
+
+### Localizing the app store page
+
+Translating the product page by hand means clicking through a language dropdown once per language, per field, per version. These three commands turn that into a csv round trip.
+
+    dotnet run -- export-metadata            # App Store Connect -> AppMetadata.csv
+    # ... translate the table with whatever tool you like ...
+    dotnet run -- import-metadata translated_AppMetadata.csv
+
+The fields covered are the localizable texts of the product page:
+
+| field | lives on |
+|---|---|
+| `name` | App Information |
+| `subtitle` | App Information |
+| `promotional_text` | app store version |
+| `description` | app store version |
+| `whats_new` | app store version |
+| `keywords` | app store version |
+
+The exported table has one row per field and one column per language:
+
+    "Key","Id","Shared Comments","English (United States)(en-US)","Ukrainian(uk)"
+    "name","name","App Information > Name. Max 30 characters.","Titan Soul: Action RPG Offline","Titan Soul: Action RPG Offline"
+    "subtitle","subtitle","App Information > Subtitle. Max 30 characters.","A challenging souls like aRPG","Хардкорна souls-like aRPG"
+
+- rows are matched by the `Key` column, so the order of rows and columns does not matter
+- a language is identified by the **locale code in the trailing parentheses** of its column, `English (United States)(en-US)` and `en-US` mean the same thing. Adding a language is just adding a column
+- **empty cells never erase anything**, they mean "not translated"
+
+#### Validation
+
+The whole table is checked against the App Store Connect limits **before the first write goes out**, and a single bad value stops the run with nothing sent:
+
+    [VALIDATION] 13 values would be rejected by App Store Connect:
+
+       keywords           de-DE (column 'de')          103 characters, the limit is 100
+       keywords           el                           106 characters, the limit is 100
+       subtitle           vi                           33 characters, the limit is 30
+
+    nothing was sent. Fix the table and run again,
+    or pass --force to send everything that is valid and skip the values listed above.
+
+This matters because the writes are not transactional: without the check, a table with one long keyword line leaves half the languages updated and half not, and the next attempt has to be reasoned about instead of just re-run.
+
+`--force` runs anyway and skips exactly the values listed in the report. `-n` always continues past validation, since a dry run can not send anything either way.
+
+#### Locale codes
+
+The App Store has its own locale codes, and a translation table usually carries plain language codes instead. `import-metadata` maps them before sending anything:
+
+    'pt' -> 'pt-BR' (already on the app)
+    'es' -> 'es-MX' (already on the app)
+    'de' -> 'de-DE' (App Store default for this language)
+    'zh' -> 'zh-Hans' (App Store default for this language)
+
+When the app already has a localization for that language, **the app wins** — a `pt` column goes into the `pt-BR` page you already maintain instead of creating a second Portuguese. Otherwise the App Store default is used (`es` → `es-ES`, `fr` → `fr-FR`, `ar` → `ar-SA`, ...).
+
+The App Store only shows product pages in ~39 languages, so a column for anything else (Bengali, Bulgarian, Estonian, Albanian, Bosnian, Filipino, Irish, Latvian, Lithuanian, Nepali, Serbian, Slovenian, Persian, ...) is **skipped with a warning and no request at all**. The list lives in `src/AppStoreLocales.cs` if Apple ever adds one.
+
+- values that already match App Store Connect are not re-sent, so re-running after a partial failure is cheap
+- a text longer than the field limit is skipped with a warning instead of failing the whole locale
+- run `import-metadata` with `-n` first to see exactly what would change
+
+Both commands work on the **editable** version (the one you are preparing for submission) and the **editable** App Information, since a released version does not accept edits. Pass `--version <x.y.z>` to pin a different one.
+
+Without a path argument the table is read from / written next to your `config.json`, or on the Desktop when there is no config directory.
+
+- 
+
+    export-metadata [<path-to-output.csv>] [--version <x.y.z>] [-v]
+
+- 
+
+    import-metadata [<path-to-translations.csv>] [--version <x.y.z>] [--force] [--no-create] [-n] [-v]
+
+
+    options:
+    --version <x.y.z>            Write to this exact app store version instead of the editable one.
+    --force                      Run even though validation found problems: every value that would
+                                be rejected is skipped, everything else is sent.
+    --no-create                  Do not create localizations for locales the app does not have yet.
+    -n                           Dry run: print everything that would change, without writing.
+    -v                           Include additional verbose output
+
+---
+
+### Promotional Text and new versions
+
+When you create a new app version, App Store Connect copies every text into it **except the Promotional Text**. For a couple of dozen languages that is a nightmare to redo by hand.
+
+    dotnet run -- copy-promo
+
+takes the Promotional Text of every locale from the previous version and writes it into the current, editable one. Locales that already have the same text are left alone.
+
+- 
+
+    copy-promo [--from <x.y.z>] [--version <x.y.z>] [-n] [-v]
+
+
+    options:
+    --from <x.y.z>               Copy from this exact app store version instead of the previous one.
+    --version <x.y.z>            Copy into this exact app store version instead of the editable one.
+    -n                           Dry run: print what would be copied, without writing anything.
+    -v                           Include additional verbose output
 
 ---
 
