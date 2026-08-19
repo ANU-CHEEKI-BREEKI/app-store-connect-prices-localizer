@@ -10,6 +10,9 @@ var commands = new CommandsCollection()
     new Command_ImportMetadata(),
     new Command_CopyPromoText(),
     new Command_CreateAllLocales(),
+    new Command_ListScreenshots(),
+    new Command_ExportScreenshots(),
+    new Command_ImportScreenshots(),
 };
 
 if (commands.TryPrintHelp(args))

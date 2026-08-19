@@ -300,6 +300,117 @@ Without a path argument the table is read from / written next to your `config.js
 
 ---
 
+### Localizing the screenshots
+
+    dotnet run -- list-screenshots           # what this app has
+    dotnet run -- export-screenshots         # App Store Connect -> Screenshots/<locale>/...
+    dotnet run -- import-screenshots -n      # Screenshots/ -> App Store Connect, dry run first
+
+#### What do I have?
+
+`--locales` and `--display-types` expect Apple's own codes, and there is no way to guess which ones a given app uses:
+
+    dotnet run -- list-screenshots
+
+    locales of this version (12):
+
+       locale       shots  display types
+       de-DE            8  APP_IPHONE_67
+       en-US           16  APP_IPHONE_67, APP_IPAD_PRO_3GEN_129
+
+    display types in use (2):
+
+       display type                     shots  locales  resolution
+       APP_IPHONE_67                       96       12  1290x2796
+       APP_IPAD_PRO_3GEN_129               24        3  2048x2732
+
+Add `--all` to also see every locale the App Store supports and every display type the API knows, with `*` marking the ones this version already uses.
+
+- 
+
+    list-screenshots [--version <x.y.z>] [--all] [-v]
+
+#### Downloading
+
+    dotnet run -- export-screenshots
+
+gives every locale its own folder:
+
+    Screenshots/
+      screenshots.csv
+      en-US/
+        APP_IPHONE_67/
+          01_home.png
+          02_editor.png
+        APP_IPAD_PRO_3GEN_129/
+          01_home.png
+      de-DE/
+        ...
+
+The numeric prefix keeps the order the screenshots have in App Store Connect, and `screenshots.csv` maps every file back to its locale, display type, position and screenshot id.
+
+`--layout flat` writes the same information into the file names instead, for image editors that cannot walk subfolders:
+
+    Screenshots/
+      en-US__APP_IPHONE_67__01_home.png
+      de-DE__APP_IPHONE_67__01_home.png
+
+`import-screenshots` reads both layouts, so pick whichever is easier to work with.
+
+**About the image quality.** App Store Connect never returns the file that was uploaded. What the API exposes is an `imageAsset` template url pointing at Apple's image service:
+
+    https://is1-ssl.mzstatic.com/image/thumb/.../{w}x{h}bb.{f}
+
+The command asks that url for the asset's own width and height, so nothing is rescaled, and for `png`, which is lossless. The downloaded pixels are identical to the upload. The file itself is a re-encode though: the exact bytes, the file size and any embedded metadata are gone. Good enough for one edit round trip, not a substitute for keeping your design source files.
+
+- 
+
+    export-screenshots [<path-to-output-folder>] [--version <x.y.z>] [--locales <a,b,c>] [--display-types <a,b>] [--layout folders|flat] [--format png|jpg] [--overwrite] [-v]
+
+
+    options:
+    --version <x.y.z>            Export from this exact app store version instead of the editable one.
+    --locales <a,b,c>            Only export these locales, e.g. 'en-US,de-DE'. Default is all of them.
+    --display-types <a,b>        Only export these display types, e.g. 'APP_IPHONE_67'. Default is all.
+    --layout <folders|flat>      One folder per locale (default), or everything in one folder with the
+                                locale and display type in the file name.
+    --format <png|jpg>           Image format to request. Default is 'png', which is lossless.
+    --overwrite                  Re-download files that already exist, instead of skipping them.
+    -v                           Include additional verbose output
+
+#### Uploading back
+
+Edit the files in place, keep the folder structure and the numeric prefixes, then:
+
+    dotnet run -- import-screenshots -n      # see exactly what would happen
+    dotnet run -- import-screenshots         # do it
+
+By default every locale + display type you have local files for is **replaced**: the screenshots already in that set are deleted and the local ones uploaded in their place, in file name order. Sets you have no files for are left alone. `--keep` appends instead and deletes nothing.
+
+App Store Connect does not accept an image in a single request. Every upload is a reservation: creating the `appScreenshot` returns a list of upload operations, each one a url plus the byte range to `PUT` to it, and only a final patch with `uploaded: true` and the md5 of the file hands the image over. The command does all of that per file.
+
+Two things worth knowing:
+
+- it writes to the **editable** version only, a released one does not accept changes. Pass `--version <x.y.z>` to pin a different one
+- Apple validates the images **asynchronously**. A resolution that does not match the display type is reported on the version page in App Store Connect afterwards, not by this command
+
+A locale that exists as a folder but not as a localization on the version is skipped with a warning — run `create-all-locales` first.
+
+- 
+
+    import-screenshots [<path-to-folder>] [--version <x.y.z>] [--locales <a,b,c>] [--display-types <a,b>] [--keep] [-n] [-v]
+
+
+    options:
+    --version <x.y.z>            Upload into this exact app store version instead of the editable one.
+    --locales <a,b,c>            Only upload these locales. Default is every locale found in the folder.
+    --display-types <a,b>        Only upload these display types. Default is every one found.
+    --keep                       Append after the existing screenshots instead of replacing them.
+    -n                           Dry run: print every deletion and upload, without writing.
+    -v                           Include additional verbose output
+
+---
+
 ### Promotional Text and new versions
 
 When you create a new app version, App Store Connect copies every text into it **except the Promotional Text**. For a couple of dozen languages that is a nightmare to redo by hand.
