@@ -10,7 +10,13 @@ public class Config
     public string AppId { get; set; } = "";
     public string DefaultPricesFilePath { get; set; } = "";
     public string LocalizedPricesTemplateFilePath { get; set; } = "";
-    public string ProductDefinitionsFilePath { get; set; } = "";
+
+    /// <summary>
+    /// csv with the product definitions the 'export-iaps' and 'create-iaps' commands read and write.
+    /// the default must not be empty: Program.cs combines it with the config directory, and
+    /// Path.Combine(directory, "") gives back the directory itself, which is not a file to write to
+    /// </summary>
+    public string ProductDefinitionsFilePath { get; set; } = "./product-definitions.csv";
     public string AppMetadataFilePath { get; set; } = "";
 
     /// <summary>

@@ -5,6 +5,7 @@ var commands = new CommandsCollection()
     new Command_List(),
     new Command_Localize(),
     new Command_Restore(),
+    new Command_ExportIaps(),
     new Command_CreateIaps(),
     new Command_ExportMetadata(),
     new Command_ImportMetadata(),

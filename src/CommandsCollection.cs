@@ -56,7 +56,7 @@ public class CommandsCollection : List<CommandBase>
         );
         CommandLinesUtils.PrintOption(
             "--products <path>",
-            "Specifies path to csv with product definitions, used to create new In-App Purchases. If not specified, used path from global config json."
+            "Specifies path to the csv with product definitions the 'export-iaps' and 'create-iaps' commands read and write. If not specified, used path from global config json."
         );
         CommandLinesUtils.PrintOption(
             "--metadata <path>",

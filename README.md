@@ -186,6 +186,31 @@ profile, and finally `../config.json`.
 
 - 
 
+    export-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [--region <region>] [--iap <id>] [-v]
+
+
+    description:
+            Exports all In-App Purchases into a product definitions csv, ready to
+            be edited in a spreadsheet and fed back to 'create-iaps'.
+            The price column is the base price in the default region. Prices for
+            all the other territories are not exported, 'localize' recalculates
+            them from the percentage template.
+            The title and the description are the In-App Purchase localization in
+            the configured locale, the rest of the locales are not exported.
+            An existing csv at the target path is overwritten.
+
+    options:
+    --products <path>            Specifies path to the csv to write. If not specified, used path from
+                                global config json ('ProductDefinitionsFilePath').
+    --locale <locale>            Locale of the exported localization. Default is en-US, or locale
+                                specified in global config.json.
+    --region <region>            Territory the exported base price is read from. Default is USA, or
+                                region specified in global config.json.
+    --iap <iap-id>               Export only this one In-App Purchase.
+    -v                           Include additional verbose output
+
+- 
+
     create-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [-v]
 
 
@@ -234,6 +259,15 @@ profile, and finally `../config.json`.
 ### Declaring products to create
 
 `create-iaps` reads products from the csv pointed to by `ProductDefinitionsFilePath` (or `--products`).
+
+The easiest way to get that file is to let `export-iaps` write it for you, then add a line to it:
+
+    dotnet run -- export-iaps       # App Store Connect -> product-definitions.csv
+    # ... copy a line, change the product id, the price and the texts ...
+    dotnet run -- create-iaps       # product-definitions.csv -> App Store Connect
+
+Existing products are skipped by `create-iaps`, so re-feeding the whole exported file only creates
+the lines you added.
 
     product_id;reference_name;type;default_price;localized_title;localized_description
     com.YourCompany.YourGame.no_ads;no_ads;non-consumable;5;Disable annoying ads;Disable annoying ads
