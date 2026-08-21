@@ -291,7 +291,8 @@ public class Command_ExportScreenshots : AppScreenshotsCommandBase
         if (!string.IsNullOrWhiteSpace(Config.ConfigDirectory) && Directory.Exists(Config.ConfigDirectory))
             return Path.Combine(Config.ConfigDirectory, DefaultFolderName);
 
-        var desktop = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop");
+        // ask the system where the desktop is: on Windows it can live under OneDrive or carry a localized name
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
         return Path.Combine(desktop, DefaultFolderName);
     }
 }
