@@ -9,10 +9,16 @@ public abstract class CommandBase
     public abstract string Name { get; }
     public abstract string Description { get; }
 
-    public void Initialize(AppStoreConnectConfiguration service, Config config, string[] args)
+    /// <summary>
+    /// whether the command needs an app config at all. Offline commands like 'config'
+    /// run before any config is located and before the private key is read.
+    /// </summary>
+    public virtual bool NeedsConfig => true;
+
+    public void Initialize(AppStoreConnectConfiguration? service, Config config, string[] args)
     {
         Args = args;
-        Service = service;
+        Service = service!;
         Config = config;
     }
 

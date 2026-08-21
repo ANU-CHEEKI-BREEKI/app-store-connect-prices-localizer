@@ -113,6 +113,28 @@ There are a away to [manage requests rate limits](https://developer.apple.com/do
 
 ---
 
+### Profiles: never type `--config` again
+
+The app configs live outside of this (public) repo, so every command used to need
+`--config <path>`. Register the path once under a name instead:
+
+    dotnet run -- config add titan-souls ../apps-configs/titan-souls
+    dotnet run -- config add island-raid ../apps-configs/island-raid
+
+The first profile you add becomes the current one, so from now on plain `dotnet run -- list`
+just works. To switch:
+
+    dotnet run -- config use island-raid
+    dotnet run -- config list
+
+    dotnet run -- list --profile titan-souls     # one-off, current profile stays
+
+Profiles are stored in `~/.config/ios-iap/profiles.json`, the same way `gcloud` or `gh` keep
+theirs. The config is picked in this order: `--config <path>`, `--profile <name>`, the current
+profile, and finally `../config.json`.
+
+---
+
 ### A couple more commands
 
 - 
@@ -185,6 +207,27 @@ There are a away to [manage requests rate limits](https://developer.apple.com/do
     --locale <locale>            Locale of the created localization. Default is en-US, or locale
                                 specified in global config.json
     -v                           Include additional verbose output
+
+- 
+
+    config [list | add <name> <path> | use <name> | remove <name> | path]
+
+
+    description:
+            Manages named profiles, so a command can run without --config.
+            A profile is just a name for a config.json path, kept in your home
+            directory (`~/.config/ios-iap/profiles.json`).
+            This command does not talk to App Store Connect.
+
+    subcommands:
+    list                         Show every profile. The current one is marked with '*'. This is the
+                                default when no subcommand is given.
+    add <name> <path>            Register a config.json under a name, or point an existing name at a
+                                new path. A folder that contains config.json works too. The first
+                                profile added becomes current.
+    use <name>                   Make a profile the current one.
+    remove <name>                Forget a profile. The config file itself is not touched.
+    path                         Print where the profiles file lives.
 
 ---
 

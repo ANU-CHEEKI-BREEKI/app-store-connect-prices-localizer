@@ -13,6 +13,7 @@ var commands = new CommandsCollection()
     new Command_ListScreenshots(),
     new Command_ExportScreenshots(),
     new Command_ImportScreenshots(),
+    new Command_Config(),
 };
 
 if (commands.TryPrintHelp(args))
@@ -36,10 +37,36 @@ if (args.HasFlag("-h")
     return;
 }
 
-var resolvedPathGetter = new CommandLinesUtils.ResolvedPathGetter();
-var configPath = args.TryGetOption("--config", "../config.json");
-
 var verbose = args.HasFlag("-v");
+
+if (!command.NeedsConfig)
+{
+    command.Initialize(null, new Config(), args);
+    await command.ExecuteAsync();
+    return;
+}
+
+var resolvedPathGetter = new CommandLinesUtils.ResolvedPathGetter();
+
+string configPath;
+try
+{
+    configPath = Profiles.ResolveConfigPath(args, out var configSource);
+    if (verbose)
+        Console.WriteLine($"config: {configPath} ({configSource})");
+}
+catch (InvalidOperationException ex)
+{
+    Console.WriteLine($"[ERROR] {ex.Message}");
+    return;
+}
+
+if (!File.Exists(configPath) && !File.Exists(Path.Combine(configPath, "config.json")))
+{
+    Console.WriteLine($"[ERROR] config not found: {Path.GetFullPath(configPath)}");
+    Console.WriteLine("        pass --config <path>, or register a profile once: config add <name> <path-to-config.json>");
+    return;
+}
 
 var config = await CommandLinesUtils.LoadJson<Config>(
     configPath,
