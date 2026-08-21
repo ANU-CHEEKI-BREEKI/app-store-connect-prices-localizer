@@ -10,7 +10,7 @@ public class Command_CreateIaps : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("create-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [-v]");
+        Console.WriteLine("create-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [--iap <id[,id...]>] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -32,6 +32,10 @@ public class Command_CreateIaps : CommandBase
             "Locale of the created localization. Default is en-US, or locale specified in global config.json"
         );
         CommandLinesUtils.PrintOption(
+            CommandLinesUtils.IapOptionName,
+            CommandLinesUtils.IapOptionDescription
+        );
+        CommandLinesUtils.PrintOption(
             "-v",
             "Include additional verbose output"
         );
@@ -49,9 +53,7 @@ public class Command_CreateIaps : CommandBase
             if (definitions is null)
                 return;
 
-            var singleIap = Config.Iap;
-            if (!string.IsNullOrEmpty(singleIap))
-                definitions = definitions.Where(d => d.ProductId == singleIap).ToList();
+            definitions = FilterByIap(definitions, d => d.ProductId);
 
             if (definitions.Count == 0)
             {

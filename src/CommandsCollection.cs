@@ -75,8 +75,8 @@ public class CommandsCollection : List<CommandBase>
         //     "Specify the base currency from which to convert prices. Default is USD, or currency specified in global config.json"
         // );
         CommandLinesUtils.PrintOption(
-            "--iap <iap-id>",
-            "Specify the ID of a specific In-App Purchase to run command for."
+            CommandLinesUtils.IapOptionName,
+            CommandLinesUtils.IapOptionDescription + " Works with every command that touches products."
         );
 
         Console.WriteLine();

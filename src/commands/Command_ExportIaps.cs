@@ -27,7 +27,7 @@ public class Command_ExportIaps : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("export-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [--region <region>] [--iap <id>] [-v]");
+        Console.WriteLine("export-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [--region <region>] [--iap <id[,id...]>] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -54,8 +54,8 @@ public class Command_ExportIaps : CommandBase
             "Territory the exported base price is read from. Default is USA, or region specified in global config.json."
         );
         CommandLinesUtils.PrintOption(
-            "--iap <iap-id>",
-            "Export only this one In-App Purchase."
+            CommandLinesUtils.IapOptionName,
+            CommandLinesUtils.IapOptionDescription
         );
         CommandLinesUtils.PrintOption(
             "-v",
@@ -87,9 +87,7 @@ public class Command_ExportIaps : CommandBase
 
             var products = await GetAllIapsAsync(verbose);
 
-            var singleIap = Config.Iap;
-            if (!string.IsNullOrEmpty(singleIap))
-                products = products.Where(p => p.Attributes?.ProductId == singleIap).ToList();
+            products = FilterByIap(products, p => p.Attributes?.ProductId);
 
             if (products.Count == 0)
             {

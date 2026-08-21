@@ -186,7 +186,7 @@ profile, and finally `../config.json`.
 
 - 
 
-    export-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [--region <region>] [--iap <id>] [-v]
+    export-iaps [--products <path-to-product-definitions.csv>] [--locale <locale>] [--region <region>] [--iap <id[,id...]>] [-v]
 
 
     description:
@@ -206,7 +206,8 @@ profile, and finally `../config.json`.
                                 specified in global config.json.
     --region <region>            Territory the exported base price is read from. Default is USA, or
                                 region specified in global config.json.
-    --iap <iap-id>               Export only this one In-App Purchase.
+    --iap <id[,id...]>           Run only for these In-App Purchases, a comma separated list of
+                                product ids. Default is every product.
     -v                           Include additional verbose output
 
 - 
@@ -268,6 +269,13 @@ The easiest way to get that file is to let `export-iaps` write it for you, then 
 
 Existing products are skipped by `create-iaps`, so re-feeding the whole exported file only creates
 the lines you added.
+
+`--iap` takes a comma separated list, and every command that touches products accepts it. So the
+products you just added can be priced without touching the other ones:
+
+    dotnet run -- localize --iap com.YourCompany.YourGame.pack_a,com.YourCompany.YourGame.pack_b
+
+An id that matches nothing is reported, so a typo does not look like a clean run that did nothing.
 
     product_id;reference_name;type;default_price;localized_title;localized_description
     com.YourCompany.YourGame.no_ads;no_ads;non-consumable;5;Disable annoying ads;Disable annoying ads

@@ -226,6 +226,19 @@ public static class CommandLinesUtils
     private static List<string> ParseCsvLine(string line, char separator)
         => ParseCsv(line, separator).FirstOrDefault() ?? new();
 
+    public const string IapOptionName = "--iap <id[,id...]>";
+    public const string IapOptionDescription = "Run only for these In-App Purchases, a comma separated list of product ids. Default is every product.";
+
+    /// <summary>
+    /// product ids of the --iap option. an empty set means every product,
+    /// so a command that is not narrowed down runs for everything
+    /// </summary>
+    public static HashSet<string> ParseIapFilter(string filter)
+        => new(
+            (filter ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.Ordinal
+        );
+
     public static bool HasFlag(this string[] args, string flag)
         => args.Contains(flag);
 

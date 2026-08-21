@@ -22,6 +22,33 @@ public abstract class CommandBase
         Config = config;
     }
 
+    /// <summary>
+    /// product ids from the --iap option, empty means every product.
+    /// A run time filter: it narrows a command down to a few products without touching the config
+    /// </summary>
+    public HashSet<string> IapFilter => CommandLinesUtils.ParseIapFilter(Config.Iap);
+
+    /// <summary>
+    /// keeps only the items named in the --iap option, everything when it is not given.
+    /// An id that matched nothing is reported: a typo would otherwise look like a clean no-op run
+    /// </summary>
+    protected List<T> FilterByIap<T>(IEnumerable<T> items, Func<T, string?> productIdOf)
+    {
+        var ids = IapFilter;
+        var all = items.ToList();
+
+        if (ids.Count == 0)
+            return all;
+
+        var kept = all.Where(i => ids.Contains(productIdOf(i) ?? "")).ToList();
+
+        var missing = ids.Except(kept.Select(i => productIdOf(i) ?? "")).ToList();
+        foreach (var id in missing)
+            Console.WriteLine($"Warning: --iap '{id}' matched no product.");
+
+        return kept;
+    }
+
     public async Task ExecuteAsync()
         => await InternalExecuteAsync();
 

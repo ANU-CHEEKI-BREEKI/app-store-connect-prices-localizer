@@ -26,9 +26,7 @@ public class Command_Localize : CommandBase
             var appApi = new AppsApi(Service);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
 
-            var singeIap = Config.Iap;
-            if (!string.IsNullOrEmpty(singeIap))
-                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
+            iaps.Data = FilterByIap(iaps.Data, p => p.Attributes?.ProductId);
 
             // using to get local prices
             var listCommand = new Command_List();
@@ -90,7 +88,7 @@ public class Command_Localize : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [-v] [-l]");
+        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -109,6 +107,10 @@ public class Command_Localize : CommandBase
             "Specifies path to json with percentages for each region that needs to be localized. Default path is: ./configs/localized-prices-template.json"
         );
 
+        CommandLinesUtils.PrintOption(
+            CommandLinesUtils.IapOptionName,
+            CommandLinesUtils.IapOptionDescription
+        );
         CommandLinesUtils.PrintOption(
             "-v",
             "Include additional verbose output"

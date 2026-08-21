@@ -25,9 +25,7 @@ public class Command_List : CommandBase
 
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
 
-            var singeIap = Config.Iap;
-            if (!string.IsNullOrEmpty(singeIap))
-                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
+            iaps.Data = FilterByIap(iaps.Data, p => p.Attributes?.ProductId);
 
 
             foreach (var iap in iaps.Data)
@@ -95,7 +93,7 @@ public class Command_List : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("list [-l] [-v]");
+        Console.WriteLine("list [-p] [-l] [--iap <id[,id...]>] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -111,6 +109,10 @@ public class Command_List : CommandBase
         CommandLinesUtils.PrintOption(
             "-l",
             "Include local pricing for all regions. Only if -p is specified"
+        );
+        CommandLinesUtils.PrintOption(
+            CommandLinesUtils.IapOptionName,
+            CommandLinesUtils.IapOptionDescription
         );
         CommandLinesUtils.PrintOption(
             "-v",

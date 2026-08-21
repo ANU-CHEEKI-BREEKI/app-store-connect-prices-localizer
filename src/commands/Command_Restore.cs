@@ -24,7 +24,7 @@ public class Command_Restore : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("restore [--prices <path-to-default-prices.json>] [-v] [-l]");
+        Console.WriteLine("restore [--prices <path-to-default-prices.json>] [--iap <id[,id...]>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -34,6 +34,10 @@ public class Command_Restore : CommandBase
         Console.WriteLine();
         Console.WriteLine("options:");
 
+        CommandLinesUtils.PrintOption(
+            CommandLinesUtils.IapOptionName,
+            CommandLinesUtils.IapOptionDescription
+        );
         CommandLinesUtils.PrintOption(
             "-v",
             "Include additional verbose output"
@@ -69,10 +73,7 @@ public class Command_Restore : CommandBase
             var appApi = new AppsApi(Service);
             var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId);
 
-            var singeIap = Config.Iap;
-
-            if (!string.IsNullOrEmpty(singeIap))
-                iaps.Data = iaps.Data.Where(p => p.Attributes.ProductId == singeIap).ToList();
+            iaps.Data = FilterByIap(iaps.Data, p => p.Attributes?.ProductId);
 
             // for each iap on server - just set default price
             var iapPrices = new List<IapPriceSetup>();
