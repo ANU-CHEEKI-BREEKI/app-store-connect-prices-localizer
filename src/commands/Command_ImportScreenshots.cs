@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using AppStoreConnect.Net.Api;
 using AppStoreConnect.Net.Model;
 using Newtonsoft.Json;
@@ -483,14 +482,9 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
         if (string.IsNullOrEmpty(screenshotId))
             throw new InvalidOperationException("App Store Connect did not return a screenshot id.");
 
-        var operations = created.Data?.Attributes?.UploadOperations ?? new List<UploadOperation>();
-        if (operations.Count == 0)
-            throw new InvalidOperationException("App Store Connect returned no upload operations.");
+        var chunks = await MediaUpload.SendAllChunksAsync(http, created.Data?.Attributes?.UploadOperations, bytes);
 
-        foreach (var operation in operations)
-            await SendChunkAsync(http, operation, bytes);
-
-        var checksum = Convert.ToHexString(MD5.HashData(bytes)).ToLowerInvariant();
+        var checksum = MediaUpload.Checksum(bytes);
 
         await screenshotsApi.AppScreenshotsUpdateInstanceAsync(
             screenshotId,
@@ -504,39 +498,7 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
         );
 
         if (verbose)
-            Console.WriteLine($"      {group.Locale,-12} {group.DisplayType,-30} {file.FileName} {bytes.Length / 1024} KB in {operations.Count} chunks");
-    }
-
-    /// <summary>
-    /// one upload operation is one byte range of the file. the headers apple sends back have to be
-    /// replayed as given, and 'Content-Type' among them belongs on the content, not on the request
-    /// </summary>
-    private static async Task SendChunkAsync(HttpClient http, UploadOperation operation, byte[] bytes)
-    {
-        using var request = new HttpRequestMessage(
-            new HttpMethod(string.IsNullOrWhiteSpace(operation.Method) ? "PUT" : operation.Method),
-            operation.Url
-        );
-
-        var content = new ByteArrayContent(bytes, operation.Offset, operation.Length);
-
-        foreach (var header in operation.RequestHeaders ?? new List<HttpHeader>())
-        {
-            if (string.IsNullOrWhiteSpace(header.Name))
-                continue;
-
-            if (!request.Headers.TryAddWithoutValidation(header.Name, header.Value))
-                content.Headers.TryAddWithoutValidation(header.Name, header.Value);
-        }
-
-        request.Content = content;
-
-        using var response = await http.SendAsync(request);
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync();
-            throw new HttpRequestException($"chunk upload failed with {(int)response.StatusCode} {response.ReasonPhrase}: {body}");
-        }
+            Console.WriteLine($"      {group.Locale,-12} {group.DisplayType,-30} {file.FileName} {bytes.Length / 1024} KB in {chunks} chunks");
     }
 
     /// <summary>the inverse of <see cref="AppScreenshotsCommandBase.DisplayTypeName"/></summary>

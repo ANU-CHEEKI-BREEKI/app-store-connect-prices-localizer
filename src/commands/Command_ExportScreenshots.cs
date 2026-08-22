@@ -267,10 +267,7 @@ public class Command_ExportScreenshots : AppScreenshotsCommandBase
     /// asking for the asset's own width and height means it is served without any rescaling
     /// </summary>
     private static string BuildImageUrl(ImageAsset asset, string format)
-        => asset.TemplateUrl
-            .Replace("{w}", asset.Width.ToString())
-            .Replace("{h}", asset.Height.ToString())
-            .Replace("{f}", format);
+        => MediaUpload.DownloadUrl(asset, format)!;
 
     private static string BuildFileName(string sourceFileName, string format)
     {

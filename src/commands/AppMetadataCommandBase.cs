@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text.RegularExpressions;
 using AppStoreConnect.Net.Api;
 using AppStoreConnect.Net.Client;
 using AppStoreConnect.Net.Model;
@@ -296,47 +294,13 @@ public abstract class AppMetadataCommandBase : CommandBase
             _ => null,
         };
 
-    /// <summary>
-    /// builds the language column header the translation tooling expects: 'English (United States)(en-US)'.
-    /// the locale code in the trailing parentheses is what makes the import exact
-    /// </summary>
+    /// <summary>the language column header, 'English (United States)(en-US)'</summary>
     public static string LocaleColumnName(string locale)
-    {
-        var name = locale;
+        => LocaleColumns.ColumnName(locale);
 
-        try
-        {
-            var culture = CultureInfo.GetCultureInfo(locale);
-            if (!culture.EnglishName.StartsWith("Unknown", StringComparison.OrdinalIgnoreCase))
-                name = culture.EnglishName;
-        }
-        catch (CultureNotFoundException)
-        {
-            // an App Store locale .NET does not know, the raw code is a good enough column title
-        }
-
-        return $"{name}({locale})";
-    }
-
-    /// <summary>
-    /// reads the locale code back out of a column header.
-    /// returns null for the 'Key' / 'Id' / 'Shared Comments' columns and for anything that is not a locale
-    /// </summary>
+    /// <summary>the locale code out of a column header, null when the column is not a language</summary>
     public static string? ExtractLocale(string header)
-    {
-        var close = header.LastIndexOf(')');
-        if (close < 0)
-            return null;
-
-        var open = header.LastIndexOf('(', close - 1);
-        if (open < 0)
-            return null;
-
-        var code = header.Substring(open + 1, close - open - 1).Trim();
-
-        // 'en', 'en-US', 'zh-Hans'. keeps a plain 'Portuguese (Brazil)' header from looking like a locale
-        return Regex.IsMatch(code, "^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})?$") ? code : null;
-    }
+        => LocaleColumns.Extract(header);
 
     /// <summary>
     /// resolves an output/input path the way the rest of the tool does:
