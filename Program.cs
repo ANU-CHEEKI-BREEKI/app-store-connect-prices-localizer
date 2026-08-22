@@ -14,6 +14,7 @@ var commands = new CommandsCollection()
     new Command_ListScreenshots(),
     new Command_ExportScreenshots(),
     new Command_ImportScreenshots(),
+    new Command_CopyUrls(),
     new Command_Config(),
 };
 
