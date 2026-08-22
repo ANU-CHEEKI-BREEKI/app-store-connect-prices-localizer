@@ -20,7 +20,7 @@ public class Command_LocalesExportIaps : IapLocalesCommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("locales export iaps [--csv <path>] [--locales <code[,code...]>] [--iap <id[,id...]>] [-v]");
+        Console.WriteLine("locales export iaps [--csv <path>] [--all-locales] [--locales <code[,code...]>] [--iap <id[,id...]>] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -30,6 +30,7 @@ public class Command_LocalesExportIaps : IapLocalesCommandBase
         CommandLinesUtils.PrintDescription($"Every product contributes two rows, '<product_id>.{NameField}' and '<product_id>.{DescriptionField}', because a translation service wants one string per row.");
         CommandLinesUtils.PrintDescription("Not to be confused with 'export-iaps', the top level command that writes the product definitions csv 'create-iaps' reads back: prices, one language, one row per product. This command is only about the text.");
         CommandLinesUtils.PrintDescription("Every language a product already has gets a column, and the source locales lead. They only decide what comes first, they never narrow anything down.");
+        CommandLinesUtils.PrintDescription($"Pass {AllLocalesOption} to get a column for every one of the {AppStoreLocales.Supported.Length} languages the App Store supports, whether or not anything is translated into it yet. Without it only the languages that already have text get a column.");
         CommandLinesUtils.PrintDescription($"A display name over {IapFields[0].MaxLength} characters or a description over {IapFields[1].MaxLength} is reported at the end, because App Store Connect rejects those and a translation is routinely longer than its english.");
         CommandLinesUtils.PrintDescription($"If no path is given, the table is written next to your config.json as '{DefaultFileName}', or to the Desktop when there is no config directory. An existing csv is overwritten.");
 
@@ -39,6 +40,10 @@ public class Command_LocalesExportIaps : IapLocalesCommandBase
         CommandLinesUtils.PrintOption(
             "--csv <path>",
             $"Where to write the table. If not specified, the path from global config json ('IapTranslationsFilePath') is used. A directory is also accepted, then '{DefaultFileName}' is created inside it."
+        );
+        CommandLinesUtils.PrintOption(
+            AllLocalesOption,
+            AllLocalesDescription
         );
         CommandLinesUtils.PrintOption(
             "--locales <code[,code...]>",

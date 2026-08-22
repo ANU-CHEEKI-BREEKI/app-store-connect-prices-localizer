@@ -38,7 +38,7 @@ public class Command_LocalesExportAchievements : GameCenterCommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("locales export achievements [--csv <path>] [--locales <code[,code...]>] [-v]");
+        Console.WriteLine("locales export achievements [--csv <path>] [--all-locales] [--locales <code[,code...]>] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -48,6 +48,7 @@ public class Command_LocalesExportAchievements : GameCenterCommandBase
         CommandLinesUtils.PrintDescription($"Every achievement contributes three rows, '<vendor_id>.{NameField}', '<vendor_id>.{BeforeEarnedField}' and '<vendor_id>.{AfterEarnedField}', because a translation service wants one string per row.");
         CommandLinesUtils.PrintDescription("Points, type, images and the reference name are not exported and never change.");
         CommandLinesUtils.PrintDescription("Every language an achievement already has gets a column, and the source locales lead. They only decide what comes first, they never narrow anything down: a source locale nothing is translated into yet still gets its empty column, because that column is the work.");
+        CommandLinesUtils.PrintDescription($"Pass {AllLocalesOption} to get a column for every one of the {AppStoreLocales.Supported.Length} languages the App Store supports, whether or not anything is translated into it yet. Without it only the languages that already have text get a column.");
         CommandLinesUtils.PrintDescription($"If no path is given, the table is written next to your config.json as '{DefaultFileName}', or to the Desktop when there is no config directory.");
         CommandLinesUtils.PrintDescription("An existing csv at the target path is overwritten.");
 
@@ -57,6 +58,10 @@ public class Command_LocalesExportAchievements : GameCenterCommandBase
         CommandLinesUtils.PrintOption(
             "--csv <path>",
             $"Where to write the table. If not specified, the path from global config json ('AchievementTranslationsFilePath') is used. A directory is also accepted, then '{DefaultFileName}' is created inside it."
+        );
+        CommandLinesUtils.PrintOption(
+            AllLocalesOption,
+            AllLocalesDescription
         );
         CommandLinesUtils.PrintOption(
             "--locales <code[,code...]>",

@@ -608,8 +608,8 @@ Same table `export-metadata` writes: one row per key, one column per language.
 
 | what | rows per item | limits |
 |---|---|---|
-| achievement | `.name`, `.before_earned_description`, `.after_earned_description` | 30, 200, 200 |
-| in-app purchase | `.name`, `.description` | 30, 45 |
+| achievement | `.name`, `.before_earned_description`, `.after_earned_description` | 30, 120, 120 |
+| in-app purchase | `.name`, `.description` | 35, 55 |
 
 - an achievement is keyed by its **vendor identifier**, a product by its **product id**. The key is
   split at the **last** dot, since a product id contains dots
@@ -642,7 +642,7 @@ with nothing sent:
 
     [VALIDATION] 1 values would be rejected by App Store Connect:
 
-       description    com.example.pack_a [uk] is 85 characters, the limit is 45
+       description    com.example.pack_a [uk] is 85 characters, the limit is 55
 
     nothing was sent. Fix the table and run again,
     or pass --force to send everything that is valid and skip the values listed above.

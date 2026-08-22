@@ -23,6 +23,11 @@ public abstract class LocalesCommandBase : CommandBase
     protected bool Verbose => Args.HasFlag("-v");
     protected bool DryRun => Args.HasFlag("-n") || Args.HasFlag("--dry-run");
 
+    public const string AllLocalesOption = "--all-locales";
+
+    public const string AllLocalesDescription =
+        "Produce a column for every language the App Store supports, not just the ones that already have text. That is what makes the csv a complete translation job in one go.";
+
     /// <summary>
     /// Which languages get a column, and in what order.
     ///
@@ -30,6 +35,9 @@ public abstract class LocalesCommandBase : CommandBase
     /// translation service reads as its context - and everything already translated follows.
     /// A source locale that nothing is translated into yet still gets its (empty) column, because
     /// an empty column is exactly the work that has to be done.
+    ///
+    /// '--all-locales' adds every language the App Store supports on top of that, which turns the
+    /// csv from "what is translated" into "what could be".
     /// </summary>
     protected List<string> ResolveLocales(IEnumerable<string> found)
     {
@@ -46,9 +54,15 @@ public abstract class LocalesCommandBase : CommandBase
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(l => l, StringComparer.Ordinal);
 
+        // the supported list goes last, so the languages that already have text keep their place
+        // near the front where a translator looks first
+        var supported = Args.HasFlag(AllLocalesOption)
+            ? AppStoreLocales.Supported.AsEnumerable()
+            : Enumerable.Empty<string>();
+
         var locales = new List<string>();
 
-        foreach (var locale in leading.Concat(translated))
+        foreach (var locale in leading.Concat(translated).Concat(supported))
         {
             if (string.IsNullOrWhiteSpace(locale))
                 continue;
