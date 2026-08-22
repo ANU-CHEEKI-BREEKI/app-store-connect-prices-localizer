@@ -37,7 +37,10 @@ Also you can provide some comand parameters each time calling `localize`, or set
         "LocalizedPricesTemplateFilePath": "",
         "ProductDefinitionsFilePath": "./product-definitions.csv",
         "AppMetadataFilePath": "",
-        
+        "AchievementTranslationsFilePath": "./achievement-translations.csv",
+        "IapTranslationsFilePath": "./iap-translations.csv",
+        "SourceLocales": ["en-US", "uk"],
+
         "DefaultRegion": "USA",
         "DefaultLocale": "en-US",
         "Iap": ""
@@ -493,6 +496,242 @@ A locale that exists as a folder but not as a localization on the version is ski
     --keep                       Append after the existing screenshots instead of replacing them.
     -n                           Dry run: print every deletion and upload, without writing.
     -v                           Include additional verbose output
+
+---
+
+### The same three urls, in every language
+
+App Store Connect keeps the **Privacy Policy, Support and Marketing url per language**, and fills in
+none of them when you add a language. So the review refuses to start with a wall of one line per
+language:
+
+    The items below are required to start the review process:
+    Greek - Privacy Policy URL - This field is required
+    Polish - Privacy Policy URL - This field is required
+    Korean - Privacy Policy URL - This field is required
+    ... and twenty more
+
+They are almost always the same url everywhere, so:
+
+    dotnet run -- copy-urls -n     # what it would fill in
+    dotnet run -- copy-urls
+
+    -> source locale en-US
+    -> privacy_policy_url   https://www.example.com/privacy
+    -> support_url          https://www.example.com/terms
+    -> marketing_url        https://www.example.com/
+
+       [SET]  el         privacy_policy_url, support_url, marketing_url
+       [SET]  pl         privacy_policy_url, support_url, marketing_url
+       [KEEP] uk         marketing_url
+
+- **a language that already has its own url keeps it.** A localized support page is a real thing and
+  this must not quietly undo it. `--overwrite` to replace anyway
+- a url the **source** language does not have is skipped for everyone, rather than cleared everywhere
+- the Privacy Policy url lives on the **App Information** page and is not tied to a version, the
+  other two live on the **app store version**. That is why this is one command and not two
+
+Not `copy-promo`: that one carries text from the previous *version* into the new one. This one is
+one *language* to the others, within the same version.
+
+- 
+
+    copy-urls [--from <locale>] [--fields privacy,support,marketing] [--overwrite] [--version <x.y.z>] [-n] [-v]
+
+
+    options:
+    --from <locale>              Copy from this language. Default is 'DefaultLocale', or en-US.
+    --fields <a,b,c>             Copy only these: privacy, support, marketing. Default is all three.
+    --overwrite                  Replace a url a language already has, instead of leaving it alone.
+    --version <x.y.z>            Write to this exact app store version instead of the editable one.
+    -n                           Dry run: print what would be copied, without writing anything.
+    -v                           Include additional verbose output
+
+---
+
+### Everything that is not the store page: `locales`
+
+    locales                            # which languages exist where
+    locales export achievements        # achievement text out to a csv
+    locales export iaps                # purchase text out to a csv
+    locales import achievements        # the translated csv back in
+    locales import iaps
+    locales sync achievement-images    # give every language the primary language's image
+    locales submit                     # send what is waiting to review
+
+`export-metadata` covers the store page. **Nothing covers the rest.** Game Center achievements and
+In-App Purchase names stay in whatever language you typed them in, in every country — and the
+purchase name is what the payment sheet shows *at the moment somebody pays*.
+
+Run `locales <subcommand> --help` for the options of one subcommand.
+
+#### `locales`
+
+App Store Connect keeps **three independent language lists** for one app and never syncs them. This
+prints all three side by side and names what is missing from where:
+
+    app store page (50)   version 1.5.0:
+            ar-SA
+            ca
+            ...
+
+    in-app purchases (1)   29 product(s):
+            en-US
+
+    game center achievements (1)   73 achievement(s):
+            en-US
+
+    not everywhere (49):
+            ar-SA      missing from: in-app purchases, game center achievements
+            uk         missing from: in-app purchases, game center achievements
+
+Read only. **There is no `locales add`, on purpose**: a language exists *because* text for it
+exists, so adding a language and writing its text are the same thing. Add a column to the csv.
+
+#### Exporting
+
+    dotnet run -- locales export achievements
+    dotnet run -- locales export iaps
+
+    219 key(s) from 73 achievement(s), 3 language(s).
+
+    filled in:
+            en-US         219 of 219 key(s)
+            uk              0 of 219 key(s)  <- empty, ready to translate
+
+Same table `export-metadata` writes: one row per key, one column per language.
+
+    "Key","Id","Shared Comments","English (United States)(en-US)","Ukrainian(uk)"
+    "dragon.name","dragon.name","Game Center > 'Dragon' > Title. Max 30 characters.","Dragon Slayer","Вбивця Драконів"
+    "dragon.before_earned_description","...","... Max 200 characters.","Defeat the dragon","Здолай дракона"
+    "dragon.after_earned_description","...","... Max 200 characters.","You defeated it","Ти здолав його"
+
+| what | rows per item | limits |
+|---|---|---|
+| achievement | `.name`, `.before_earned_description`, `.after_earned_description` | 30, 200, 200 |
+| in-app purchase | `.name`, `.description` | 30, 45 |
+
+- an achievement is keyed by its **vendor identifier**, a product by its **product id**. The key is
+  split at the **last** dot, since a product id contains dots
+- a language is identified by the **locale code in the trailing parentheses** of its column header,
+  so `English (United States)(en-US)` and `en-US` mean the same thing. Adding a language is adding a
+  column
+- columns are ordered `SourceLocales` first, then everything already translated. Source locales only
+  decide what comes **first**, never what is included — a source locale nothing is translated into
+  still gets its empty column, because that column is the work
+- `--locales en-US,uk` pins the columns for one run
+- points, type, images and reference names are never exported and never change
+
+`locales export iaps` is not `export-iaps`. That one writes the product definitions csv `create-iaps`
+reads back: prices, one language, one row per product.
+
+#### Importing
+
+    dotnet run -- locales import achievements -n     # what would change, sent nowhere
+    dotnet run -- locales import achievements        # for real
+
+- **an empty cell means "not translated yet"** and is left alone. Nothing here can delete a translation
+- **a value App Store Connect already has is not re-sent.** Re-running an unchanged csv writes nothing
+- values are compared **trimmed**, so a text typed into the console with a stray leading space does
+  not come back looking edited on every round trip
+- a language that does not exist yet is created; `--no-create` skips them instead
+- both take `-n` / `--dry-run`; `locales import iaps` also takes `--iap pack_one,pack_two`
+
+The whole table is checked **before the first write goes out**, and a single bad value stops the run
+with nothing sent:
+
+    [VALIDATION] 1 values would be rejected by App Store Connect:
+
+       description    com.example.pack_a [uk] is 85 characters, the limit is 45
+
+    nothing was sent. Fix the table and run again,
+    or pass --force to send everything that is valid and skip the values listed above.
+
+Only **new** text is held to the limit. App Store Connect accepts more than its own console says, so
+an export of a real catalog comes back with values already over the documented limit — refusing to
+re-import what it just handed you would make a round trip impossible.
+
+A localization needs **both** of its texts, so a new language that would end up with only one is
+skipped with a warning rather than sent and rejected.
+
+#### Achievement images
+
+Every achievement language has **its own image**. App Store Connect will happily store a language
+with text and no image, then keep it at `Prepare for Submission` forever and block the release with
+a message that never mentions images.
+
+So `locales import achievements` gives every language without one **the image of the primary
+language**, in the same pass as the text. `--no-images` turns that off.
+
+    dotnet run -- locales sync achievement-images -n
+
+does only that, for languages added some other way, and `--overwrite` replaces an image that has
+since been redrawn. The source is `DefaultLocale`, or `--from <locale>`.
+
+There is no api for pointing two languages at one image and none for copying one, so the bytes are
+downloaded once per achievement and uploaded to each language.
+
+#### Submitting
+
+Nothing goes to review on its own. You normally import a few times before the text is right, and
+review is the one step here that cannot be undone by running it again.
+
+    dotnet run -- locales submit -n     # what is waiting
+    dotnet run -- locales submit
+
+    -> In-App Purchases...
+       [SEND] com.example.pack_a
+    -> Game Center achievements...
+       [SEND] dragon_slayer
+    -> App store version...
+       version 1.5.0
+       [NEW]  review submission
+
+**Three different things, three different mechanisms**, and no screen in App Store Connect puts them
+together:
+
+- an **In-App Purchase** gets its own submission, independent of any app version. Only products
+  sitting in `READY_TO_SUBMIT` are sent, so running this twice is safe
+- an **achievement** is not reviewed but *released*, which is what turns its languages from
+  `Prepare for Submission` into `Live`. Achievements that already have a release are skipped, and one
+  whose languages have no image is reported instead of failing
+- the **app store version** is added to the open review submission, or to a new one, and that
+  submission is then submitted
+
+`--iaps`, `--achievements` and `--app` narrow it down; without any of them all three run.
+Both imports also take `--submit`, which sends exactly what that run changed.
+
+- 
+
+    locales export achievements [--csv <path>] [--locales <code[,code...]>] [-v]
+    locales export iaps [--csv <path>] [--locales <code[,code...]>] [--iap <id[,id...]>] [-v]
+
+
+    options:
+    --csv <path>                 Where to write the table. Default is the path from config.json
+                                ('AchievementTranslationsFilePath' / 'IapTranslationsFilePath'),
+                                then next to config.json, then the Desktop.
+    --locales <code[,code...]>   Produce columns for exactly these locales, for this run only.
+    -v                           Include additional verbose output
+
+- 
+
+    locales import achievements [--csv <path>] [--force] [--no-create] [--no-images] [--submit] [-n] [-v]
+    locales import iaps [--csv <path>] [--iap <id[,id...]>] [--force] [--no-create] [--submit] [-n] [-v]
+
+
+    options:
+    --force                      Send everything that is valid, skipping only the rejected values.
+    --no-create                  Do not create localizations for locales that do not exist yet.
+    --no-images                  (achievements) Do not copy the primary language's image.
+    --submit                     Send what this run changed to review afterwards.
+    -n                           Dry run: print what would change, without writing.
+    -v                           Include additional verbose output
+
+- 
+
+    locales sync achievement-images [--from <locale>] [--overwrite] [-n] [-v]
+    locales submit [--iaps] [--achievements] [--app] [--iap <id[,id...]>] [-n] [-v]
 
 ---
 
