@@ -18,12 +18,15 @@ public class Command_LocalesExportAchievements : GameCenterCommandBase
     public const string BeforeEarnedField = "before_earned_description";
     public const string AfterEarnedField = "after_earned_description";
 
-    /// <summary>the csv rows of one achievement, in the order App Store Connect shows them</summary>
+    /// <summary>
+    /// the csv rows of one achievement, with the limits App Store Connect enforces.
+    /// The numbers are the ones its own "Add Achievement Localization" dialog counts down from
+    /// </summary>
     public static readonly TextField[] AchievementFields =
     {
-        new(NameField, "Title", 30),
-        new(BeforeEarnedField, "Pre-earned Description", 200),
-        new(AfterEarnedField, "Earned Description", 200),
+        new(NameField, "Display Name", 30),
+        new(BeforeEarnedField, "Pre-earned Description", 120),
+        new(AfterEarnedField, "Earned Description", 120),
     };
 
     protected override TextField[] Fields => AchievementFields;
