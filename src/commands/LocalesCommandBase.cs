@@ -1,3 +1,6 @@
+using AppStoreConnect.Net.Api;
+using AppStoreConnect.Net.Model;
+
 /// <summary>
 /// Shared plumbing for the 'locales' subcommands: the ones that pull translatable text out of
 /// App Store Connect into a csv, and the ones that write a translated csv back.
@@ -8,6 +11,78 @@
 /// </summary>
 public abstract class LocalesCommandBase : CommandBase
 {
+    /// <summary>a product and every language it has, in one object</summary>
+    public class IapTexts
+    {
+        public InAppPurchaseV2 Product { get; set; } = null!;
+        public List<InAppPurchaseLocalization> Localizations { get; set; } = new();
+
+        public string ProductId => Product.Attributes?.ProductId ?? "";
+        public string ReferenceName => Product.Attributes?.Name ?? "";
+
+        public List<string> Locales => Localizations
+            .Select(l => l.Attributes?.Locale ?? "")
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+
+        public InAppPurchaseLocalization? Find(string locale)
+            => Localizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase));
+    }
+
+    protected async Task<List<IapTexts>> GetIapsAsync(bool verbose)
+    {
+        Console.WriteLine("   -> Receiving IAP list...");
+
+        var appsApi = new AppsApi(Service);
+
+        var products = await FetchAllPagesAsync<InAppPurchasesV2Response, InAppPurchaseV2>(
+            appsApi.AsynchronousClient,
+            appsApi.Configuration,
+            () => appsApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId, limit: 200),
+            r => r.Data,
+            r => r.Links?.Next,
+            verbose
+        );
+
+        var result = products
+            .Where(p => !string.IsNullOrWhiteSpace(p.Attributes?.ProductId))
+            .OrderBy(p => p.Attributes?.ProductId, StringComparer.Ordinal)
+            .Select(p => new IapTexts { Product = p })
+            .ToList();
+
+        Console.WriteLine($"   -> {result.Count} product(s), receiving their languages...");
+
+        foreach (var product in result)
+            await LoadLocalizationsAsync(product, verbose);
+
+        return result;
+    }
+
+    private async Task LoadLocalizationsAsync(IapTexts product, bool verbose)
+    {
+        var api = new InAppPurchasesApi(Service);
+
+        try
+        {
+            product.Localizations = await FetchAllPagesAsync<InAppPurchaseLocalizationsResponse, InAppPurchaseLocalization>(
+                api.AsynchronousClient,
+                api.Configuration,
+                () => api.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(product.Product.Id, limit: 200),
+                r => r.Data,
+                r => r.Links?.Next,
+                verbose
+            );
+
+            if (verbose)
+                Console.WriteLine($"      {product.ProductId,-40} {product.Localizations.Count} language(s)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Warning: could not read the languages of {product.ProductId}: {ex.Message}");
+            product.Localizations = new();
+        }
+    }
+
     /// <summary>one translatable field, one csv row per item</summary>
     public record TextField(string Key, string Title, int MaxLength);
 

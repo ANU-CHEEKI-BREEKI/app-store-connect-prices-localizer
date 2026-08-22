@@ -34,6 +34,8 @@ public class Command_Locales : CommandBase
 
             ("submit", _) => new Command_LocalesSubmit(),
 
+            ("prune", _) => new Command_LocalesPrune(),
+
             _ => new Unknown(name, target),
         };
     }
@@ -70,6 +72,7 @@ public class Command_Locales : CommandBase
         Console.WriteLine("locales import iaps [options]");
         Console.WriteLine("locales sync achievement-images [options]");
         Console.WriteLine("locales submit [options]");
+        Console.WriteLine("locales prune --keep <locales> [options]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -88,6 +91,7 @@ public class Command_Locales : CommandBase
         CommandLinesUtils.PrintOption("import achievements", "Write a translated achievements csv back, giving every new language the image of the primary one.");
         CommandLinesUtils.PrintOption("import iaps", "Write a translated products csv back into the In-App Purchase localizations. Prices are never part of the request.");
         CommandLinesUtils.PrintOption("sync achievement-images", "Give every achievement localization the image of the primary language, without touching any text.");
+        CommandLinesUtils.PrintOption("prune", "Delete achievement and In-App Purchase localizations, keeping only the languages named by --keep. Prints the plan and writes nothing unless --confirm is given.");
         CommandLinesUtils.PrintOption("submit", "Send everything that is waiting to App Store Connect review: In-App Purchases, achievements, the app store version.");
 
         Console.WriteLine();
@@ -103,6 +107,7 @@ public class Command_Locales : CommandBase
         CommandLinesUtils.PrintDescription("locales import achievements -n             # what the csv would change, sent nowhere", 4);
         CommandLinesUtils.PrintDescription("locales import iaps --submit               # the translated names go live", 4);
         CommandLinesUtils.PrintDescription("locales submit -n                          # what is waiting for review", 4);
+        CommandLinesUtils.PrintDescription("locales prune --keep en-US                 # what a rollback to english only would delete", 4);
     }
 
     /// <summary>a subcommand that does not exist, kept as a CommandBase so the router stays uniform</summary>

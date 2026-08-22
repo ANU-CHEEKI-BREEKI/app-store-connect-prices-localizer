@@ -73,7 +73,7 @@ public class Command_LocalesExportIaps : IapLocalesCommandBase
 
             var path = ResolveCsvPath(Config.IapTranslationsFilePath, DefaultFileName);
 
-            var products = await GetProductsAsync(Verbose);
+            var products = await GetIapsAsync(Verbose);
             products = FilterByIap(products, p => p.Product.Attributes?.ProductId);
 
             if (products.Count == 0)

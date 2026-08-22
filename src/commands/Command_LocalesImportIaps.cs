@@ -104,7 +104,7 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
 
             Console.WriteLine($"   -> read {csv.Rows.Count} key(s) in {csv.Locales.Count} language(s) from {Path.GetFullPath(path)}");
 
-            var products = await GetProductsAsync(Verbose);
+            var products = await GetIapsAsync(Verbose);
             products = FilterByIap(products, p => p.ProductId);
 
             var byId = products.ToDictionary(p => p.ProductId, StringComparer.Ordinal);
