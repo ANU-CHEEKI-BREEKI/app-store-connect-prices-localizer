@@ -20,6 +20,15 @@ public class Config
     public string AppMetadataFilePath { get; set; } = "";
 
     /// <summary>
+    /// csv with the Game Center achievement texts the 'locales export/import achievements'
+    /// subcommands read and write. Like ProductDefinitionsFilePath, the default must not be empty
+    /// </summary>
+    public string AchievementTranslationsFilePath { get; set; } = "./achievement-translations.csv";
+
+    /// <summary>csv with the In-App Purchase texts, one row per key and one column per language</summary>
+    public string IapTranslationsFilePath { get; set; } = "./iap-translations.csv";
+
+    /// <summary>
     /// locale codes of the source/original languages used for translation (e.g. ["en-US", "uk"]).
     /// export-metadata places these columns first in the csv so translators see the originals on the left
     /// </summary>

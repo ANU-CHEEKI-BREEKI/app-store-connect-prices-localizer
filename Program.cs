@@ -14,6 +14,7 @@ var commands = new CommandsCollection()
     new Command_ListScreenshots(),
     new Command_ExportScreenshots(),
     new Command_ImportScreenshots(),
+    new Command_Locales(),
     new Command_CopyUrls(),
     new Command_Config(),
 };
@@ -27,6 +28,10 @@ if (command is null)
     Console.WriteLine("no command fount for passed parameters");
     return;
 }
+
+// the command sees its args before anything else: a command with subcommands routes both its help
+// and whether it needs a config off them, and both are decided before Initialize runs
+command.Args = args;
 
 if (args.HasFlag("-h")
     || args.HasFlag("--help"))
@@ -90,6 +95,8 @@ config.PrivateKeyFilePath = Path.Combine(configDirectory, config.PrivateKeyFileP
 config.DefaultPricesFilePath = Path.Combine(configDirectory, config.DefaultPricesFilePath);
 config.LocalizedPricesTemplateFilePath = Path.Combine(configDirectory, config.LocalizedPricesTemplateFilePath);
 config.ProductDefinitionsFilePath = Path.Combine(configDirectory, config.ProductDefinitionsFilePath);
+config.AchievementTranslationsFilePath = Path.Combine(configDirectory, config.AchievementTranslationsFilePath);
+config.IapTranslationsFilePath = Path.Combine(configDirectory, config.IapTranslationsFilePath);
 
 // an unset metadata path has to stay unset, so the command can fall back to the config directory itself
 if (!string.IsNullOrWhiteSpace(config.AppMetadataFilePath))
@@ -104,6 +111,10 @@ config.DefaultPricesFilePath = args.TryGetOption("--prices", config.DefaultPrice
 config.LocalizedPricesTemplateFilePath = args.TryGetOption("--localized-template", config.LocalizedPricesTemplateFilePath);
 config.ProductDefinitionsFilePath = args.TryGetOption("--products", config.ProductDefinitionsFilePath);
 config.AppMetadataFilePath = args.TryGetOption("--metadata", config.AppMetadataFilePath);
+
+// one flag for both, the subcommand decides which of them it is about
+config.AchievementTranslationsFilePath = args.TryGetOption("--csv", config.AchievementTranslationsFilePath);
+config.IapTranslationsFilePath = args.TryGetOption("--csv", config.IapTranslationsFilePath);
 
 config.DefaultRegion = args.TryGetOption("--region", config.DefaultRegion);
 config.DefaultLocale = args.TryGetOption("--locale", config.DefaultLocale);
