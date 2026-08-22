@@ -14,11 +14,14 @@ public abstract class IapLocalesCommandBase : LocalesCommandBase
     public const string NameField = "name";
     public const string DescriptionField = "description";
 
-    /// <summary>the csv rows of one product, with the limits App Store Connect enforces</summary>
+    /// <summary>
+    /// the csv rows of one product, with the limits App Store Connect enforces.
+    /// The numbers are the ones its own "Add App Store Localization" dialog counts down from
+    /// </summary>
     public static readonly TextField[] IapFields =
     {
-        new(NameField, "Display Name", 30),
-        new(DescriptionField, "Description", 45),
+        new(NameField, "Display Name", 35),
+        new(DescriptionField, "Description", 55),
     };
 
     protected override TextField[] Fields => IapFields;
