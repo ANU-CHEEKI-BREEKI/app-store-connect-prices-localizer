@@ -86,7 +86,7 @@ public static class Translations
                 if (!row.TryGetValue(column.Header, out var value) || string.IsNullOrWhiteSpace(value))
                     continue;
 
-                values[column.Locale!] = value;
+                values[column.Locale!] = Flatten(value);
             }
 
             rows.Add(new TranslationRow
@@ -103,5 +103,42 @@ public static class Translations
             Locales = localeColumns.Select(c => c.Locale!).ToList(),
             Rows = rows,
         };
+    }
+
+    /// <summary>
+    /// Puts a cell on one line.
+    ///
+    /// App Store Connect refuses any of these texts outright when it contains a control character:
+    /// "cannot contain control characters (for example, null, new lines, carriage returns, escape)".
+    /// A translator handed a paragraph will hand a paragraph back, so a newline in the csv is
+    /// normal input, not a mistake - and there is nothing a store listing could do with it anyway.
+    ///
+    /// Done at load time rather than at send time so the value that gets compared against what
+    /// Apple already holds is the same one that would be sent. Otherwise a cell with a newline would
+    /// look changed on every single run.
+    /// </summary>
+    private static string Flatten(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        var lastWasSpace = false;
+
+        foreach (var ch in value)
+        {
+            var isBlank = char.IsControl(ch) || ch == ' ';
+
+            if (isBlank)
+            {
+                if (!lastWasSpace && builder.Length > 0)
+                    builder.Append(' ');
+
+                lastWasSpace = true;
+                continue;
+            }
+
+            builder.Append(ch);
+            lastWasSpace = false;
+        }
+
+        return builder.ToString().TrimEnd();
     }
 }
