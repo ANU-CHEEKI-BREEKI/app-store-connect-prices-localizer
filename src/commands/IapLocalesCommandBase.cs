@@ -1,4 +1,4 @@
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Shared plumbing for the subcommands that touch In-App Purchase texts. Both of them need the
@@ -25,11 +25,11 @@ public abstract class IapLocalesCommandBase : LocalesCommandBase
 
     protected override TextField[] Fields => IapFields;
 
-    public static string? ValueOf(InAppPurchaseLocalization? localization, string field)
+    public static string? ValueOf(JsonNode? localization, string field)
         => field switch
         {
-            NameField => localization?.Attributes?.Name,
-            DescriptionField => localization?.Attributes?.Description,
+            NameField => (string?)localization?["attributes"]?["name"],
+            DescriptionField => (string?)localization?["attributes"]?["description"],
             _ => null,
         };
 }

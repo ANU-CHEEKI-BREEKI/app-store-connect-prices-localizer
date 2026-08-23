@@ -1,4 +1,4 @@
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// downloads every product page screenshot of the app into per locale folders, so they can be
@@ -31,8 +31,8 @@ public class Command_ExportScreenshots : AppScreenshotsCommandBase
     /// <summary>a screenshot resolved to a url and a destination, so the download loop needs no api calls</summary>
     private record PlannedDownload(ScreenshotEntry Entry, string Url, string Path)
     {
-        public int Width => Entry.Asset?.Width ?? 0;
-        public int Height => Entry.Asset?.Height ?? 0;
+        public int Width => (int?)Entry.Asset?["width"] ?? 0;
+        public int Height => (int?)Entry.Asset?["height"] ?? 0;
     }
 
     public override void PrintHelp()
@@ -266,8 +266,8 @@ public class Command_ExportScreenshots : AppScreenshotsCommandBase
     /// apple's image service builds the file on request, the template carries the placeholders.
     /// asking for the asset's own width and height means it is served without any rescaling
     /// </summary>
-    private static string BuildImageUrl(ImageAsset asset, string format)
-        => MediaUpload.DownloadUrl(asset, format)!;
+    private static string BuildImageUrl(JsonNode asset, string format)
+        => AscUpload.DownloadUrl(asset, format)!;
 
     private static string BuildFileName(string sourceFileName, string format)
     {

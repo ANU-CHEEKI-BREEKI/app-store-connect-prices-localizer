@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Creates all 50 App Store Connect supported localizations on the editable version and app info page.
@@ -56,19 +55,19 @@ public class Command_CreateAllLocales : AppMetadataCommandBase
                 return;
 
             // template text sources (prefer en-US, or first available localization)
-            var primaryAppInfo = target.AppInfoLocalizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, "en-US", StringComparison.OrdinalIgnoreCase))
+            var primaryAppInfo = target.AppInfoLocalizations.FirstOrDefault(l => string.Equals((string?)l["attributes"]?["locale"], "en-US", StringComparison.OrdinalIgnoreCase))
                                  ?? target.AppInfoLocalizations.FirstOrDefault();
 
-            var primaryVersion = target.VersionLocalizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, "en-US", StringComparison.OrdinalIgnoreCase))
+            var primaryVersion = target.VersionLocalizations.FirstOrDefault(l => string.Equals((string?)l["attributes"]?["locale"], "en-US", StringComparison.OrdinalIgnoreCase))
                                  ?? target.VersionLocalizations.FirstOrDefault();
 
-            var defaultName = primaryAppInfo?.Attributes?.Name ?? "App";
-            var defaultSubtitle = primaryAppInfo?.Attributes?.Subtitle;
+            var defaultName = (string?)primaryAppInfo?["attributes"]?["name"] ?? "App";
+            var defaultSubtitle = (string?)primaryAppInfo?["attributes"]?["subtitle"];
 
-            var defaultDescription = primaryVersion?.Attributes?.Description ?? "App description";
-            var defaultKeywords = primaryVersion?.Attributes?.Keywords;
-            var defaultPromotionalText = primaryVersion?.Attributes?.PromotionalText;
-            var defaultWhatsNew = primaryVersion?.Attributes?.WhatsNew;
+            var defaultDescription = (string?)primaryVersion?["attributes"]?["description"] ?? "App description";
+            var defaultKeywords = (string?)primaryVersion?["attributes"]?["keywords"];
+            var defaultPromotionalText = (string?)primaryVersion?["attributes"]?["promotionalText"];
+            var defaultWhatsNew = (string?)primaryVersion?["attributes"]?["whatsNew"];
 
             var createdAppInfo = new List<string>();
             var createdVersion = new List<string>();
@@ -100,30 +99,25 @@ public class Command_CreateAllLocales : AppMetadataCommandBase
                         {
                             try
                             {
-                                var request = new AppInfoLocalizationCreateRequest(
-                                    data: new AppInfoLocalizationCreateRequestData(
-                                        type: AppInfoLocalizationCreateRequestData.TypeEnum.AppInfoLocalizations,
-                                        attributes: new AppInfoLocalizationCreateRequestDataAttributes(
-                                            locale: locale,
-                                            name: defaultName,
-                                            subtitle: defaultSubtitle
-                                        ),
-                                        relationships: new AppInfoLocalizationCreateRequestDataRelationships(
-                                            appInfo: new AppInfoLocalizationCreateRequestDataRelationshipsAppInfo(
-                                                data: new AppInfoLocalizationRelationshipsAppInfoData(
-                                                    type: AppInfoLocalizationRelationshipsAppInfoData.TypeEnum.AppInfos,
-                                                    id: target.AppInfo.Id
-                                                )
-                                            )
-                                        )
-                                    )
+                                var request = AscHttp.Body(
+                                    "appInfoLocalizations",
+                                    new JsonObject
+                                    {
+                                        ["appInfo"] = AscHttp.Link("appInfos", (string?)target.AppInfo["id"] ?? ""),
+                                    },
+                                    new JsonObject
+                                    {
+                                        ["locale"] = locale,
+                                        ["name"] = defaultName,
+                                        ["subtitle"] = defaultSubtitle,
+                                    }
                                 );
 
-                                var response = await new AppInfoLocalizationsApi(Service).AppInfoLocalizationsCreateInstanceAsync(request);
-                                target.AppInfoLocalizations.Add(response.Data);
+                                var response = await Http.PostAsync("/v1/appInfoLocalizations", request);
+                                target.AppInfoLocalizations.Add(response["data"]!);
                                 createdAppInfo.Add(locale);
                             }
-                            catch (AppStoreConnect.Net.Client.ApiException apiEx) when (apiEx.ErrorCode == 409 || apiEx.ErrorContent?.ToString()?.Contains("DUPLICATE") == true)
+                            catch (AscApiException apiEx) when (apiEx.StatusCode == 409 || apiEx.ResponseBody.Contains("DUPLICATE"))
                             {
                                 Console.WriteLine($"      [EXISTS] App Info localization for {locale}");
                                 skippedAppInfo.Add(locale);
@@ -157,32 +151,27 @@ public class Command_CreateAllLocales : AppMetadataCommandBase
                     {
                         try
                         {
-                            var request = new AppStoreVersionLocalizationCreateRequest(
-                                data: new AppStoreVersionLocalizationCreateRequestData(
-                                    type: AppStoreVersionLocalizationCreateRequestData.TypeEnum.AppStoreVersionLocalizations,
-                                    attributes: new AppStoreVersionLocalizationCreateRequestDataAttributes(
-                                        description: defaultDescription,
-                                        locale: locale,
-                                        keywords: defaultKeywords,
-                                        promotionalText: defaultPromotionalText,
-                                        whatsNew: defaultWhatsNew
-                                    ),
-                                    relationships: new AlternativeDistributionPackageCreateRequestDataRelationships(
-                                        appStoreVersion: new AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersion(
-                                            data: new AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersionData(
-                                                type: AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersionData.TypeEnum.AppStoreVersions,
-                                                id: target.Version.Id
-                                            )
-                                        )
-                                    )
-                                )
+                            var request = AscHttp.Body(
+                                "appStoreVersionLocalizations",
+                                new JsonObject
+                                {
+                                    ["appStoreVersion"] = AscHttp.Link("appStoreVersions", (string?)target.Version["id"] ?? ""),
+                                },
+                                new JsonObject
+                                {
+                                    ["description"] = defaultDescription,
+                                    ["locale"] = locale,
+                                    ["keywords"] = defaultKeywords,
+                                    ["promotionalText"] = defaultPromotionalText,
+                                    ["whatsNew"] = defaultWhatsNew,
+                                }
                             );
 
-                            var response = await new AppStoreVersionLocalizationsApi(Service).AppStoreVersionLocalizationsCreateInstanceAsync(request);
-                            target.VersionLocalizations.Add(response.Data);
+                            var response = await Http.PostAsync("/v1/appStoreVersionLocalizations", request);
+                            target.VersionLocalizations.Add(response["data"]!);
                             createdVersion.Add(locale);
                         }
-                        catch (AppStoreConnect.Net.Client.ApiException apiEx) when (apiEx.ErrorCode == 409 || apiEx.ErrorContent?.ToString()?.Contains("DUPLICATE") == true)
+                        catch (AscApiException apiEx) when (apiEx.StatusCode == 409 || apiEx.ResponseBody.Contains("DUPLICATE"))
                         {
                             Console.WriteLine($"      [EXISTS] Version localization for {locale}");
                             skippedVersion.Add(locale);

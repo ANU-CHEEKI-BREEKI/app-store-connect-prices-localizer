@@ -1,7 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
-using AppStoreConnect.Net.Client;
 
 /// <summary>every page's 'data' elements in one array, every page's 'included' in a second</summary>
 public record PagedResult(JsonArray Data, JsonArray Included);
@@ -55,8 +54,6 @@ public class AscHttp
         => _token = () => auth.Token;
 
     /// <summary>the bridge for code still built on the generated client: same calls, its token</summary>
-    public AscHttp(Configuration service)
-        => _token = () => service.AccessToken;
 
     public async Task<JsonNode> GetAsync(string path)
         => await SendAsync(HttpMethod.Get, path, null);

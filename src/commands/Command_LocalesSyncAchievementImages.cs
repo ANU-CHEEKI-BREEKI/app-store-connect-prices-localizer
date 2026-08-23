@@ -95,8 +95,8 @@ public class Command_LocalesSyncAchievementImages : GameCenterCommandBase
                 {
                     foreach (var target in targets)
                     {
-                        var current = achievement.ImageOf(target)?.Attributes?.FileName;
-                        var wanted = achievement.ImageOf(source)?.Attributes?.FileName;
+                        var current = (string?)achievement.ImageOf(target)?["attributes"]?["fileName"];
+                        var wanted = (string?)achievement.ImageOf(source)?["attributes"]?["fileName"];
 
                         Console.WriteLine($"         {target.Attributes?.Locale,-10} {current ?? "(none)"} -> {wanted}");
                         copied.Add($"{achievement.VendorIdentifier} [{target.Attributes?.Locale}]");
@@ -120,7 +120,7 @@ public class Command_LocalesSyncAchievementImages : GameCenterCommandBase
 
                     try
                     {
-                        await CopyImageAsync(http, achievement, target, downloaded.Value.Bytes, downloaded.Value.FileName, Verbose);
+                        await CopyImageAsync(achievement, target, downloaded.Value.Bytes, downloaded.Value.FileName, Verbose);
                         copied.Add($"{achievement.VendorIdentifier} [{locale}]");
                     }
                     catch (Exception ex)

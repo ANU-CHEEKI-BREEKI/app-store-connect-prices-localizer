@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// App Store Connect copies almost every text into a newly created version, but not the Promotional Text.
@@ -65,13 +64,13 @@ public class Command_CopyPromoText : AppMetadataCommandBase
             if (target is null)
                 return;
 
-            Console.WriteLine($"   -> target version {target.Attributes?.VersionString} ({target.Attributes?.AppVersionState}).");
+            Console.WriteLine($"   -> target version {(string?)target["attributes"]?["versionString"]} ({StateName(target["attributes"]?["appVersionState"])}).");
 
             var source = await ResolveSourceAsync(versions, target, verbose);
             if (source is null)
                 return;
 
-            var targetLocalizations = await GetVersionLocalizationsAsync(target.Id, verbose);
+            var targetLocalizations = await GetVersionLocalizationsAsync((string?)target["id"] ?? "", verbose);
 
             var copied = new List<string>();
             var skipped = new List<string>();
@@ -79,24 +78,24 @@ public class Command_CopyPromoText : AppMetadataCommandBase
 
             foreach (var sourceLocalization in source.Localizations)
             {
-                var locale = sourceLocalization.Attributes?.Locale;
-                var text = sourceLocalization.Attributes?.PromotionalText;
+                var locale = (string?)sourceLocalization["attributes"]?["locale"];
+                var text = (string?)sourceLocalization["attributes"]?["promotionalText"];
 
                 if (string.IsNullOrWhiteSpace(locale) || string.IsNullOrWhiteSpace(text))
                     continue;
 
                 var targetLocalization = targetLocalizations.FirstOrDefault(
-                    l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase)
+                    l => string.Equals((string?)l["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase)
                 );
 
                 if (targetLocalization is null)
                 {
-                    Console.WriteLine($"      [SKIP] {locale} does not exist on version {target.Attributes?.VersionString}.");
+                    Console.WriteLine($"      [SKIP] {locale} does not exist on version {(string?)target["attributes"]?["versionString"]}.");
                     skipped.Add(locale);
                     continue;
                 }
 
-                if (string.Equals(targetLocalization.Attributes?.PromotionalText, text, StringComparison.Ordinal))
+                if (string.Equals((string?)targetLocalization["attributes"]?["promotionalText"], text, StringComparison.Ordinal))
                 {
                     if (verbose)
                         Console.WriteLine($"      [SAME] {locale} already has this Promotional Text.");
@@ -113,16 +112,15 @@ public class Command_CopyPromoText : AppMetadataCommandBase
 
                 try
                 {
-                    var request = new AppStoreVersionLocalizationUpdateRequest(
-                        data: new AppStoreVersionLocalizationUpdateRequestData(
-                            type: AppStoreVersionLocalizationUpdateRequestData.TypeEnum.AppStoreVersionLocalizations,
-                            id: targetLocalization.Id,
-                            attributes: BuildVersionAttributes(targetLocalization, promotionalText: text)
-                        )
+                    var localizationId = (string?)targetLocalization["id"] ?? "";
+
+                    var request = AscHttp.BodyWithAttributes(
+                        "appStoreVersionLocalizations",
+                        localizationId,
+                        BuildVersionAttributes(targetLocalization, promotionalText: text)
                     );
 
-                    await new AppStoreVersionLocalizationsApi(Service)
-                        .AppStoreVersionLocalizationsUpdateInstanceAsync(targetLocalization.Id, request);
+                    await Http.PatchAsync($"/v1/appStoreVersionLocalizations/{localizationId}", request);
 
                     copied.Add(locale);
                 }
@@ -141,47 +139,51 @@ public class Command_CopyPromoText : AppMetadataCommandBase
         }
     }
 
-    private record SourceVersion(AppStoreVersion Version, List<AppStoreVersionLocalization> Localizations);
+    private record SourceVersion(JsonNode Version, List<JsonNode> Localizations);
+
+    /// <summary>the state the way the generated client printed it: the enum names had no underscores</summary>
+    private static string? StateName(JsonNode? state)
+        => ((string?)state)?.Replace("_", "");
 
     /// <summary>
     /// finds the version to copy from. without '--from' it walks back through the older versions
     /// until it finds one that actually has a Promotional Text somewhere
     /// </summary>
-    private async Task<SourceVersion?> ResolveSourceAsync(List<AppStoreVersion> versions, AppStoreVersion target, bool verbose)
+    private async Task<SourceVersion?> ResolveSourceAsync(List<JsonNode> versions, JsonNode target, bool verbose)
     {
         var requested = Args.TryGetOption("--from", "");
 
         if (!string.IsNullOrWhiteSpace(requested))
         {
             var explicitVersion = versions.FirstOrDefault(
-                v => string.Equals(v.Attributes?.VersionString, requested, StringComparison.OrdinalIgnoreCase)
+                v => string.Equals((string?)v["attributes"]?["versionString"], requested, StringComparison.OrdinalIgnoreCase)
             );
 
             if (explicitVersion is null)
             {
-                Console.WriteLine($"[ERROR] no app store version '{requested}' found. Available: {string.Join(", ", versions.Select(v => v.Attributes?.VersionString))}");
+                Console.WriteLine($"[ERROR] no app store version '{requested}' found. Available: {string.Join(", ", versions.Select(v => (string?)v["attributes"]?["versionString"]))}");
                 return null;
             }
 
-            var localizations = await GetVersionLocalizationsAsync(explicitVersion.Id, verbose);
+            var localizations = await GetVersionLocalizationsAsync((string?)explicitVersion["id"] ?? "", verbose);
             return new SourceVersion(explicitVersion, localizations);
         }
 
         // versions come back newest first, so the first older one is the previous version
-        var candidates = versions.Where(v => v.Id != target.Id).ToList();
+        var candidates = versions.Where(v => (string?)v["id"] != (string?)target["id"]).ToList();
 
         foreach (var candidate in candidates)
         {
-            var localizations = await GetVersionLocalizationsAsync(candidate.Id, verbose);
+            var localizations = await GetVersionLocalizationsAsync((string?)candidate["id"] ?? "", verbose);
 
-            var hasText = localizations.Any(l => !string.IsNullOrWhiteSpace(l.Attributes?.PromotionalText));
+            var hasText = localizations.Any(l => !string.IsNullOrWhiteSpace((string?)l["attributes"]?["promotionalText"]));
             if (hasText)
             {
-                Console.WriteLine($"   -> source version {candidate.Attributes?.VersionString} ({candidate.Attributes?.AppVersionState}).");
+                Console.WriteLine($"   -> source version {(string?)candidate["attributes"]?["versionString"]} ({StateName(candidate["attributes"]?["appVersionState"])}).");
                 return new SourceVersion(candidate, localizations);
             }
 
-            Console.WriteLine($"   -> version {candidate.Attributes?.VersionString} has no Promotional Text, looking further back...");
+            Console.WriteLine($"   -> version {(string?)candidate["attributes"]?["versionString"]} has no Promotional Text, looking further back...");
         }
 
         Console.WriteLine("[ERROR] no previous version with a Promotional Text found, nothing to copy.");
@@ -191,11 +193,11 @@ public class Command_CopyPromoText : AppMetadataCommandBase
     private static string Preview(string value)
         => value.Length <= 60 ? value : value.Substring(0, 60) + "...";
 
-    private void PrintSummary(AppStoreVersion source, AppStoreVersion target, List<string> copied, List<string> skipped, List<string> failed)
+    private void PrintSummary(JsonNode source, JsonNode target, List<string> copied, List<string> skipped, List<string> failed)
     {
         Console.WriteLine();
         Console.WriteLine("summary:");
-        Console.WriteLine($"   {source.Attributes?.VersionString} -> {target.Attributes?.VersionString}");
+        Console.WriteLine($"   {(string?)source["attributes"]?["versionString"]} -> {(string?)target["attributes"]?["versionString"]}");
 
         Console.WriteLine($"   copied:  {copied.Count}");
         foreach (var item in copied)

@@ -1,11 +1,8 @@
-
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 public class Command_List : CommandBase
 {
-    public class TerritoryPrice : Dictionary<string, InAppPurchasePricePoint> { }
+    public class TerritoryPrice : Dictionary<string, JsonNode> { }
 
     protected override async Task InternalExecuteAsync()
     {
@@ -19,51 +16,48 @@ public class Command_List : CommandBase
                 Console.WriteLine("   -> receiving IAP list...");
 
             var appId = Config.AppId;
-            var baseTerritory = Config.DefaultRegion;
 
-            var appApi = new AppsApi(Service);
+            var page = await Http.GetPagedAsync($"/v1/apps/{appId}/inAppPurchasesV2?limit=200");
 
-            var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
-
-            iaps.Data = FilterByIap(iaps.Data, p => p.Attributes?.ProductId);
+            var iaps = FilterByIap(page.Data, p => (string?)p?["attributes"]?["productId"]);
 
 
-            foreach (var iap in iaps.Data)
-                Console.WriteLine(iap.Attributes.ProductId);
+            foreach (var iap in iaps)
+                Console.WriteLine((string?)iap?["attributes"]?["productId"]);
 
             Console.WriteLine();
 
             if (!printPrices)
                 return;
 
-            var pricePoints = new Dictionary<InAppPurchaseV2, InAppPriceData?>();
-            var localPricePoints = new Dictionary<InAppPurchaseV2, Dictionary<string, InAppPriceData>>();
+            var pricePoints = new Dictionary<JsonNode, InAppPriceData?>();
+            var localPricePoints = new Dictionary<JsonNode, Dictionary<string, InAppPriceData>>();
 
             Console.WriteLine($"   -> fetching prices...");
 
-            foreach (var iap in iaps.Data)
+            foreach (var iap in iaps)
             {
-                pricePoints[iap] = await GetBasePrice(iap);
+                pricePoints[iap!] = await GetBasePrice(iap!);
 
                 if (printLocalPrices)
-                    localPricePoints[iap] = await GetAllLocalPricesAsync(iap);
+                    localPricePoints[iap!] = await GetAllLocalPricesAsync(iap!);
             }
 
             var stringPairs = new List<StringPairs>();
 
-            foreach (var iap in iaps.Data)
+            foreach (var iap in iaps)
             {
-                var price = pricePoints[iap];
+                var price = pricePoints[iap!];
 
-                stringPairs.Add(new StringPairs { A = iap.Attributes.ProductId, B = $"{price?.PricePoint?.Attributes?.CustomerPrice} {price?.Currency}" });
-                // Console.WriteLine($"{price?.TerritoryCode,5} {price?.PricePoint?.Attributes?.CustomerPrice,10} {price?.Currency,5} {iap.Attributes.ProductId,5}");
+                stringPairs.Add(new StringPairs { A = (string?)iap?["attributes"]?["productId"], B = $"{(string?)price?.PricePoint?["attributes"]?["customerPrice"]} {price?.Currency}" });
+                // Console.WriteLine($"{price?.TerritoryCode,5} {(string?)price?.PricePoint?["attributes"]?["customerPrice"],10} {price?.Currency,5} {(string?)iap?["attributes"]?["productId"],5}");
 
                 if (printLocalPrices)
                 {
-                    var localPrices = localPricePoints[iap];
+                    var localPrices = localPricePoints[iap!];
                     foreach (var item in localPrices)
-                        stringPairs.Add(new StringPairs { A = $"    {item.Key}", B = $"{item.Value.PricePoint.Attributes.CustomerPrice} {item.Value.Currency}" });
-                    // Console.WriteLine($"{item.Key,5} : {item.Value.PricePoint.Attributes.CustomerPrice,10} {item.Value.Currency,5}");
+                        stringPairs.Add(new StringPairs { A = $"    {item.Key}", B = $"{(string?)item.Value.PricePoint["attributes"]?["customerPrice"]} {item.Value.Currency}" });
+                    // Console.WriteLine($"{item.Key,5} : {(string?)item.Value.PricePoint["attributes"]?["customerPrice"],10} {item.Value.Currency,5}");
                 }
             }
 
@@ -122,43 +116,36 @@ public class Command_List : CommandBase
 
     public class InAppPriceData
     {
-        public InAppPurchaseV2 Iap { get; set; }
-        public InAppPurchasePricePoint PricePoint { get; set; }
+        public JsonNode Iap { get; set; }
+        public JsonNode PricePoint { get; set; }
         public string TerritoryCode { get; set; }
         public string Currency { get; set; }
     }
 
-    public async Task<Dictionary<string, InAppPriceData>> GetAllLocalPricesAsync(InAppPurchaseV2 iap)
+    public async Task<Dictionary<string, InAppPriceData>> GetAllLocalPricesAsync(JsonNode iap)
     {
         var verbose = Args.HasFlag("-v");
         var results = new Dictionary<string, InAppPriceData>();
 
-        var iapApi = new InAppPurchasesApi(Service);
-        var pointsApi = new InAppPurchasePricePointsApi(Service);
-        var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
+        Console.WriteLine($"   -> Getting full price list for {(string?)iap["attributes"]?["name"]}...");
 
-        Console.WriteLine($"   -> Getting full price list for {iap.Attributes.Name}...");
-
-        var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(
-            iap.Id,
-            include: new List<string> { "manualPrices", "automaticPrices", "baseTerritory" },
-            limitAutomaticPrices: 50,
-            limitManualPrices: 50
+        var scheduleResponse = await Http.GetAsync(
+            $"/v2/inAppPurchases/{(string?)iap["id"]}/iapPriceSchedule"
+            + "?include=manualPrices,automaticPrices,baseTerritory"
+            + "&limit[manualPrices]=50&limit[automaticPrices]=50"
         );
 
-        if (scheduleResponse.Data == null)
+        if (scheduleResponse["data"] is null)
         {
             if (verbose)
                 Console.WriteLine("Error: Schedule Data is null.");
             return results;
         }
 
-        var schedule = scheduleResponse.Data;
+        var scheduleId = (string?)scheduleResponse["data"]?["id"];
 
-        var manualResponse = await schedulesApi.InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
-            schedule.Id,
-            include: new List<string> { "inAppPurchasePricePoint", "territory" },
-            limit: 200
+        var manualResponse = await Http.GetAsync(
+            $"/v1/inAppPurchasePriceSchedules/{scheduleId}/manualPrices?include=inAppPurchasePricePoint,territory&limit=200"
         );
 
         var manualPricesData = ParsePricesAndCurrencies(manualResponse, iap);
@@ -169,7 +156,7 @@ public class Command_List : CommandBase
         if (verbose)
             Console.WriteLine($"Loaded {results.Count} manual overrides.");
 
-        string? basePricePointId = (await GetBasePrice(iap))?.PricePoint.Id;
+        string? basePricePointId = (string?)(await GetBasePrice(iap))?.PricePoint["id"];
 
         if (basePricePointId == null)
         {
@@ -183,19 +170,19 @@ public class Command_List : CommandBase
 
         try
         {
-            var equalizationsResponse = await pointsApi.InAppPurchasePricePointsEqualizationsGetToManyRelatedAsync(
-                basePricePointId,
-                include: new List<string> { "territory" },
-                limit: 200
+            // the price point id is an opaque string that may carry characters a url path can not,
+            // so it is escaped for transport and never decoded or rebuilt
+            var equalizationsResponse = await Http.GetAsync(
+                $"/v1/inAppPurchasePricePoints/{Uri.EscapeDataString(basePricePointId)}/equalizations?include=territory&limit=200"
             );
 
-            if (equalizationsResponse.Data != null && equalizationsResponse.Included != null)
+            if (equalizationsResponse["data"] is JsonArray equalizations && equalizationsResponse["included"] is JsonArray equalizationsIncluded)
             {
-                var currencyMap = ExtractCurrencyMap(equalizationsResponse.Included);
+                var currencyMap = ExtractCurrencyMap(equalizationsIncluded);
 
-                foreach (var pricePoint in equalizationsResponse.Data)
+                foreach (var pricePoint in equalizations)
                 {
-                    var territoryId = pricePoint.Relationships?.Territory?.Data?.Id;
+                    var territoryId = (string?)pricePoint?["relationships"]?["territory"]?["data"]?["id"];
 
                     if (territoryId != null)
                     {
@@ -206,7 +193,7 @@ public class Command_List : CommandBase
                             results[territoryId] = new InAppPriceData
                             {
                                 Iap = iap,
-                                PricePoint = pricePoint,
+                                PricePoint = pricePoint!,
                                 TerritoryCode = territoryId,
                                 Currency = currencyCode ?? "UNKNOWN"
                             };
@@ -225,24 +212,23 @@ public class Command_List : CommandBase
         return results;
     }
 
-    private Dictionary<string, InAppPriceData> ParsePricesAndCurrencies(InAppPurchasePricesResponse response, InAppPurchaseV2 iap)
+    private Dictionary<string, InAppPriceData> ParsePricesAndCurrencies(JsonNode response, JsonNode iap)
     {
         var res = new Dictionary<string, InAppPriceData>();
 
-        if (response.Data == null || response.Included == null)
+        if (response["data"] is not JsonArray data || response["included"] is not JsonArray included)
             return res;
 
-        var pointsMap = response.Included
-            .Select(x => x.ActualInstance)
-            .OfType<InAppPurchasePricePoint>()
-            .ToDictionary(p => p.Id);
+        var pointsMap = included
+            .Where(i => (string?)i?["type"] == "inAppPurchasePricePoints")
+            .ToDictionary(p => (string)p!["id"]!, p => p!);
 
-        var currencyMap = ExtractCurrencyMap(response.Included);
+        var currencyMap = ExtractCurrencyMap(included);
 
-        foreach (var entry in response.Data)
+        foreach (var entry in data)
         {
-            var territoryId = entry.Relationships?.Territory?.Data?.Id;
-            var pointId = entry.Relationships?.InAppPurchasePricePoint?.Data?.Id;
+            var territoryId = (string?)entry?["relationships"]?["territory"]?["data"]?["id"];
+            var pointId = (string?)entry?["relationships"]?["inAppPurchasePricePoint"]?["data"]?["id"];
 
             if (territoryId != null && pointId != null && pointsMap.TryGetValue(pointId, out var point))
             {
@@ -260,81 +246,69 @@ public class Command_List : CommandBase
         return res;
     }
 
-    private Dictionary<string, string> ExtractCurrencyMap(List<Territory> includedList)
+    private Dictionary<string, string> ExtractCurrencyMap(JsonArray includedList)
     {
         var map = new Dictionary<string, string>();
 
-        var territories = includedList
-            .OfType<Territory>();
+        foreach (var t in includedList)
+        {
+            if ((string?)t?["type"] != "territories")
+                continue;
 
-        foreach (var t in territories)
-            if (t.Id != null && t.Attributes?.Currency != null)
-                map[t.Id] = t.Attributes.Currency;
+            var id = (string?)t?["id"];
+            var currency = (string?)t?["attributes"]?["currency"];
+
+            if (id != null && currency != null)
+                map[id] = currency;
+        }
 
         return map;
     }
 
-    private Dictionary<string, string> ExtractCurrencyMap(List<InAppPurchasePricesResponseIncludedInner> includedList)
-    {
-        var map = new Dictionary<string, string>();
-        var territories = includedList
-            .Select(x => x.ActualInstance)
-            .OfType<Territory>();
-
-        foreach (var t in territories)
-            if (t.Id != null && t.Attributes?.Currency != null)
-                map[t.Id] = t.Attributes.Currency;
-
-        return map;
-    }
-
-    public async Task<InAppPriceData?> GetBasePrice(InAppPurchaseV2 iap)
+    public async Task<InAppPriceData?> GetBasePrice(JsonNode iap)
     {
         var v = Args.HasFlag("-v");
 
-        Console.WriteLine($"   -> Fetching prices for: {iap.Attributes.Name}...");
+        Console.WriteLine($"   -> Fetching prices for: {(string?)iap["attributes"]?["name"]}...");
 
-        var iapApi = new InAppPurchasesApi(Service);
         var baseTerritory = Config.DefaultRegion;
 
-        var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(iap.Id);
+        var scheduleResponse = await Http.GetAsync($"/v2/inAppPurchases/{(string?)iap["id"]}/iapPriceSchedule");
 
-        if (scheduleResponse.Data == null)
+        if (scheduleResponse["data"] is null)
         {
             if (v)
                 Console.WriteLine("   -> No price schedule found.");
             return null;
         }
 
-        var scheduleId = scheduleResponse.Data.Id;
-
-        var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
+        var scheduleId = (string?)scheduleResponse["data"]?["id"];
 
         if (v)
             Console.WriteLine($"   -> Fetching prices for Schedule ID: {scheduleId}...");
 
         try
         {
-            var pricesResponse = await schedulesApi.InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
-                scheduleId,
-                filterTerritory: new List<string> { baseTerritory },
-                include: new List<string> { "inAppPurchasePricePoint", "territory" }
+            var pricesResponse = await Http.GetAsync(
+                $"/v1/inAppPurchasePriceSchedules/{scheduleId}/manualPrices?filter[territory]={baseTerritory}&include=inAppPurchasePricePoint,territory"
             );
 
-            if (pricesResponse.Included != null)
+            if (pricesResponse["included"] is JsonArray included)
             {
-                foreach (var item in pricesResponse.Included)
+                foreach (var item in included)
                 {
-                    if (item.ActualInstance is InAppPurchasePricePoint pricePoint)
+                    if ((string?)item?["type"] == "inAppPurchasePricePoints")
                     {
+                        var pricePoint = item!;
+
                         if (v)
                         {
-                            var price = pricePoint.Attributes.CustomerPrice;
-                            var proceeds = pricePoint.Attributes.Proceeds;
+                            var price = (string?)pricePoint["attributes"]?["customerPrice"];
+                            var proceeds = (string?)pricePoint["attributes"]?["proceeds"];
                             Console.WriteLine($"   -> Price ({baseTerritory}): {price} (Proceeds: {proceeds})");
                         }
 
-                        var currencies = ExtractCurrencyMap(pricesResponse.Included);
+                        var currencies = ExtractCurrencyMap(included);
 
                         return new InAppPriceData
                         {
@@ -348,10 +322,10 @@ public class Command_List : CommandBase
             }
 
             if (v)
-                if (pricesResponse.Data.Count == 0)
+                if ((pricesResponse["data"] as JsonArray)?.Count == 0)
                     Console.WriteLine("   -> Price not set manually (might be Free).");
         }
-        catch (ApiException ex)
+        catch (AscApiException ex)
         {
             if (v)
                 Console.WriteLine($"   -> Price Fetch Error: {ex.Message}");

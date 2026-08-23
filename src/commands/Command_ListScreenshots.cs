@@ -131,7 +131,7 @@ public class Command_ListScreenshots : AppScreenshotsCommandBase
 
             // every image of a set has the same size, the first one that finished uploading answers for all
             var asset = group.Select(e => e.Asset).FirstOrDefault(a => a is not null);
-            var resolution = asset is null ? "-" : $"{asset.Width}x{asset.Height}";
+            var resolution = asset is null ? "-" : $"{(int?)asset["width"] ?? 0}x{(int?)asset["height"] ?? 0}";
 
             Console.WriteLine($"   {group.Key,-32} {group.Count(),5} {localeCount,8}  {resolution}");
         }

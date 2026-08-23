@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Shared plumbing for the 'locales' subcommands: the ones that pull translatable text out of
@@ -14,40 +13,31 @@ public abstract class LocalesCommandBase : CommandBase
     /// <summary>a product and every language it has, in one object</summary>
     public class IapTexts
     {
-        public InAppPurchaseV2 Product { get; set; } = null!;
-        public List<InAppPurchaseLocalization> Localizations { get; set; } = new();
+        public JsonNode Product { get; set; } = null!;
+        public List<JsonNode?> Localizations { get; set; } = new();
 
-        public string ProductId => Product.Attributes?.ProductId ?? "";
-        public string ReferenceName => Product.Attributes?.Name ?? "";
+        public string ProductId => (string?)Product?["attributes"]?["productId"] ?? "";
+        public string ReferenceName => (string?)Product?["attributes"]?["name"] ?? "";
 
         public List<string> Locales => Localizations
-            .Select(l => l.Attributes?.Locale ?? "")
+            .Select(l => (string?)l?["attributes"]?["locale"] ?? "")
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToList();
 
-        public InAppPurchaseLocalization? Find(string locale)
-            => Localizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase));
+        public JsonNode? Find(string locale)
+            => Localizations.FirstOrDefault(l => string.Equals((string?)l?["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase));
     }
 
     protected async Task<List<IapTexts>> GetIapsAsync(bool verbose)
     {
         Console.WriteLine("   -> Receiving IAP list...");
 
-        var appsApi = new AppsApi(Service);
+        var page = await Http.GetPagedAsync($"/v1/apps/{Config.AppId}/inAppPurchasesV2?limit=200");
 
-        var products = await FetchAllPagesAsync<InAppPurchasesV2Response, InAppPurchaseV2>(
-            appsApi.AsynchronousClient,
-            appsApi.Configuration,
-            () => appsApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
-
-        var result = products
-            .Where(p => !string.IsNullOrWhiteSpace(p.Attributes?.ProductId))
-            .OrderBy(p => p.Attributes?.ProductId, StringComparer.Ordinal)
-            .Select(p => new IapTexts { Product = p })
+        var result = page.Data
+            .Where(p => !string.IsNullOrWhiteSpace((string?)p?["attributes"]?["productId"]))
+            .OrderBy(p => (string?)p?["attributes"]?["productId"], StringComparer.Ordinal)
+            .Select(p => new IapTexts { Product = p! })
             .ToList();
 
         Console.WriteLine($"   -> {result.Count} product(s), receiving their languages...");
@@ -60,18 +50,13 @@ public abstract class LocalesCommandBase : CommandBase
 
     private async Task LoadLocalizationsAsync(IapTexts product, bool verbose)
     {
-        var api = new InAppPurchasesApi(Service);
-
         try
         {
-            product.Localizations = await FetchAllPagesAsync<InAppPurchaseLocalizationsResponse, InAppPurchaseLocalization>(
-                api.AsynchronousClient,
-                api.Configuration,
-                () => api.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(product.Product.Id, limit: 200),
-                r => r.Data,
-                r => r.Links?.Next,
-                verbose
+            var page = await Http.GetPagedAsync(
+                $"/v2/inAppPurchases/{(string?)product.Product?["id"]}/inAppPurchaseLocalizations?limit=200"
             );
+
+            product.Localizations = page.Data.ToList();
 
             if (verbose)
                 Console.WriteLine($"      {product.ProductId,-40} {product.Localizations.Count} language(s)");
@@ -273,11 +258,11 @@ public abstract class LocalesCommandBase : CommandBase
 
     protected static void PrintApiError(string what, Exception ex)
     {
-        if (ex is AppStoreConnect.Net.Client.ApiException api)
+        if (ex is AscApiException api)
         {
             Console.WriteLine($"[API ERROR] {what}: {api.Message}");
-            Console.WriteLine($"Status: {api.ErrorCode}");
-            Console.WriteLine($"Response Body: {api.ErrorContent}");
+            Console.WriteLine($"Status: {api.StatusCode}");
+            Console.WriteLine($"Response Body: {api.ResponseBody}");
             return;
         }
 

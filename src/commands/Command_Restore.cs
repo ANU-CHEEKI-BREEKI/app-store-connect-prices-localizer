@@ -1,15 +1,13 @@
 using System.Globalization;
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 public class IapPriceSetup
 {
     /// <summary>
     /// whole class here to not be confused what is iap id, product id, product name, etc
-    /// get InAppPurchaseV2 instances from AppStoreConnect Api
+    /// Iap is the 'data' element of an In-App Purchase from the App Store Connect api
     /// </summary>
-    public InAppPurchaseV2 Iap;
+    public JsonNode Iap;
     public double BasePrice;
     public string BaseTerritoryCode;
     public PricePerTerritory LocalPrices = new();
@@ -54,7 +52,7 @@ public class Command_Restore : CommandBase
 
         // print what we set at the end
         var listCommand = new Command_List();
-        listCommand.Initialize(Service, Config, Args);
+        listCommand.Initialize(Auth, Config, Args);
         await listCommand.ExecuteAsync();
     }
 
@@ -70,16 +68,17 @@ public class Command_Restore : CommandBase
         {
             Console.WriteLine("   -> Restoring IAP Prices...");
             Console.WriteLine("   -> Receiving IAP list...");
-            var appApi = new AppsApi(Service);
-            var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId);
+            var page = await Http.GetPagedAsync($"/v1/apps/{Config.AppId}/inAppPurchasesV2?limit=200");
 
-            iaps.Data = FilterByIap(iaps.Data, p => p.Attributes?.ProductId);
+            var iaps = FilterByIap(page.Data, p => (string?)p?["attributes"]?["productId"]);
 
             // for each iap on server - just set default price
             var iapPrices = new List<IapPriceSetup>();
-            foreach (var iap in iaps.Data)
+            foreach (var iap in iaps)
             {
-                if (!basePrices.TryGetValue(iap.Attributes.ProductId, out var basePrice))
+                var productId = (string?)iap?["attributes"]?["productId"];
+
+                if (productId is null || !basePrices.TryGetValue(productId, out var basePrice))
                     continue;
 
                 // forcibly adjust price if it is a whole number
@@ -90,7 +89,7 @@ public class Command_Restore : CommandBase
 
                 iapPrices.Add(new IapPriceSetup
                 {
-                    Iap = iap,
+                    Iap = iap!,
                     BasePrice = (double)basePrice,
                     BaseTerritoryCode = Config.DefaultRegion,
                 });
@@ -123,15 +122,15 @@ public class Command_Restore : CommandBase
 
     private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
     {
-        Console.WriteLine($"   -> Prepare iap price for IAP: {iapSettings.Iap.Attributes.ProductId}.");
+        Console.WriteLine($"   -> Prepare iap price for IAP: {(string?)iapSettings.Iap["attributes"]?["productId"]}.");
 
-        var manualPrices = new List<InAppPurchasePriceScheduleCreateRequestIncludedInner>();
+        var manualPrices = new List<JsonObject>();
 
         Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
 
         var basePoint = await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
         manualPrices.Add(
-            CreatePriceEntry(basePoint)
+            CreatePriceEntry(basePoint!)
         );
 
         foreach (var territory in iapSettings.LocalPrices)
@@ -154,40 +153,36 @@ public class Command_Restore : CommandBase
                 );
 
                 if (verbose)
-                    Console.WriteLine($" -> Set {territoryCode} to CustomerPrice: {localPoint?.Attributes?.CustomerPrice}");
+                    Console.WriteLine($" -> Set {territoryCode} to CustomerPrice: {(string?)localPoint?["attributes"]?["customerPrice"]}");
             }
         }
 
         await PushNewSchedule(iapSettings.Iap, iapSettings.BaseTerritoryCode, manualPrices, verbose);
     }
 
-    public async Task<InAppPurchasePricePoint?> GetClosestPricePointId(InAppPurchaseV2 iap, string territory, double targetPrice, bool verbose)
+    public async Task<JsonNode?> GetClosestPricePointId(JsonNode iap, string territory, double targetPrice, bool verbose)
     {
-        var iapApi = new InAppPurchasesApi(Service);
-
-        InAppPurchasePricePoint? lastLowerPoint = null;
+        JsonNode? lastLowerPoint = null;
 
         if (verbose)
             Console.WriteLine($"Starting search for closest price to {targetPrice} in {territory}...");
 
-        var response = await iapApi.InAppPurchasesV2PricePointsGetToManyRelatedAsync(
-            iap.Id,
-            filterTerritory: new List<string> { territory },
-            limit: 200
+        var response = await Http.GetAsync(
+            $"/v2/inAppPurchases/{(string?)iap["id"]}/pricePoints?filter[territory]={territory}&limit=200"
         );
 
-        var result = FindBestInPage(response.Data, targetPrice, lastLowerPoint);
+        var result = FindBestInPage(response["data"] as JsonArray, targetPrice, lastLowerPoint);
 
         if (result.FoundMatch != null)
         {
             if (verbose)
-                Console.WriteLine($"Found: {result.FoundMatch.Attributes.CustomerPrice} (ID: {result.FoundMatch.Id})");
+                Console.WriteLine($"Found: {(string?)result.FoundMatch["attributes"]?["customerPrice"]} (ID: {(string?)result.FoundMatch["id"]})");
             return result.FoundMatch;
         }
 
         lastLowerPoint = result.LastSeen ?? lastLowerPoint;
 
-        var nextHref = response.Links?.Next;
+        var nextHref = (string?)response["links"]?["next"];
         var page = 1;
 
         while (!string.IsNullOrEmpty(nextHref))
@@ -202,36 +197,23 @@ public class Command_Restore : CommandBase
                 var nextUri = new Uri(nextHref);
                 var relativePath = nextUri.PathAndQuery;
 
-                var requestOptions = new RequestOptions();
+                var pageResponse = await Http.GetAsync(relativePath);
 
-                if (!string.IsNullOrEmpty(iapApi.Configuration.AccessToken))
+                if (pageResponse["data"] is JsonArray pageData)
                 {
-                    requestOptions.HeaderParameters.Add("Authorization", "Bearer " + iapApi.Configuration.AccessToken);
-                }
-
-                var pageResponseWrapper = await iapApi.AsynchronousClient.GetAsync<InAppPurchasePricePointsResponse>(
-                    relativePath,
-                    requestOptions,
-                    iapApi.Configuration
-                );
-
-                var pageResponse = pageResponseWrapper.Data;
-
-                if (pageResponse?.Data != null)
-                {
-                    var pageResult = FindBestInPage(pageResponse.Data, targetPrice, lastLowerPoint);
+                    var pageResult = FindBestInPage(pageData, targetPrice, lastLowerPoint);
 
                     if (pageResult.FoundMatch != null)
                     {
                         if (verbose)
-                            Console.WriteLine($"Found on Page {page}: {pageResult.FoundMatch.Attributes.CustomerPrice} (ID: {pageResult.FoundMatch.Id})");
+                            Console.WriteLine($"Found on Page {page}: {(string?)pageResult.FoundMatch["attributes"]?["customerPrice"]} (ID: {(string?)pageResult.FoundMatch["id"]})");
                         return pageResult.FoundMatch;
                     }
 
                     lastLowerPoint = pageResult.LastSeen ?? lastLowerPoint;
                 }
 
-                nextHref = pageResponse?.Links?.Next;
+                nextHref = (string?)pageResponse["links"]?["next"];
             }
             catch (Exception ex)
             {
@@ -244,7 +226,7 @@ public class Command_Restore : CommandBase
         if (lastLowerPoint != null)
         {
             if (verbose)
-                Console.WriteLine($"Target price is higher than max available. Returning max: {lastLowerPoint.Attributes.CustomerPrice}");
+                Console.WriteLine($"Target price is higher than max available. Returning max: {(string?)lastLowerPoint["attributes"]?["customerPrice"]}");
             return lastLowerPoint;
         }
 
@@ -253,19 +235,19 @@ public class Command_Restore : CommandBase
         return null;
     }
 
-    private (InAppPurchasePricePoint? FoundMatch, InAppPurchasePricePoint? LastSeen) FindBestInPage(
-        List<InAppPurchasePricePoint> points,
+    private (JsonNode? FoundMatch, JsonNode? LastSeen) FindBestInPage(
+        JsonArray? points,
         double target,
-        InAppPurchasePricePoint? previousPageLastItem)
+        JsonNode? previousPageLastItem)
     {
         if (points == null || points.Count == 0)
             return (null, previousPageLastItem);
 
-        InAppPurchasePricePoint? prev = previousPageLastItem;
+        JsonNode? prev = previousPageLastItem;
 
         foreach (var current in points)
         {
-            if (double.TryParse(current.Attributes.CustomerPrice, NumberStyles.Any, CultureInfo.InvariantCulture, out double currentPrice))
+            if (double.TryParse((string?)current?["attributes"]?["customerPrice"], NumberStyles.Any, CultureInfo.InvariantCulture, out double currentPrice))
             {
                 // Якщо поточна ціна перевищила або дорівнює цілі -> ми знайшли точку перетину
                 if (currentPrice >= target)
@@ -274,7 +256,7 @@ public class Command_Restore : CommandBase
                     if (prev == null) return (current, current);
 
                     // Якщо є попередній, дивимось, хто ближче до цілі
-                    if (double.TryParse(prev.Attributes.CustomerPrice, NumberStyles.Any, CultureInfo.InvariantCulture, out double prevPrice))
+                    if (double.TryParse((string?)prev["attributes"]?["customerPrice"], NumberStyles.Any, CultureInfo.InvariantCulture, out double prevPrice))
                     {
                         double diffPrev = Math.Abs(target - prevPrice);    // Наприклад |10 - 9| = 1
                         double diffCurr = Math.Abs(currentPrice - target); // Наприклад |12 - 10| = 2
@@ -295,86 +277,61 @@ public class Command_Restore : CommandBase
         return (null, prev);
     }
 
-    private InAppPurchasePriceScheduleCreateRequestIncludedInner CreatePriceEntry(InAppPurchasePricePoint pricePoint)
-    {
-        var pricePointRelData = new InAppPurchasePriceRelationshipsInAppPurchasePricePointData(
-            type: InAppPurchasePriceRelationshipsInAppPurchasePricePointData.TypeEnum.InAppPurchasePricePoints,
-            id: pricePoint.Id
-        );
-        var pricePointRel = new InAppPurchasePriceRelationshipsInAppPurchasePricePoint(
-            data: pricePointRelData
-        );
-        var attributes = new InAppPurchasePriceInlineCreateAttributes(startDate: null);
-        var relationships = new InAppPurchasePriceInlineCreateRelationships(
-            inAppPurchasePricePoint: pricePointRel
-        );
-        var priceInlineCreate = new InAppPurchasePriceInlineCreate(
-            type: InAppPurchasePriceInlineCreate.TypeEnum.InAppPurchasePrices,
-            attributes: attributes,
-            relationships: relationships
-        )
+    /// <summary>
+    /// the inline 'inAppPurchasePrices' entry of the schedule create request. The '${guid}' id is
+    /// the temporary client-side id the api resolves between 'relationships' and 'included'
+    /// </summary>
+    private JsonObject CreatePriceEntry(JsonNode pricePoint)
+        => new()
         {
-            Id = "${" + Guid.NewGuid().ToString() + "}"
+            ["type"] = "inAppPurchasePrices",
+            ["id"] = "${" + Guid.NewGuid().ToString() + "}",
+            ["attributes"] = new JsonObject { ["startDate"] = null },
+            ["relationships"] = new JsonObject
+            {
+                // the price point id is opaque, it goes back to the api exactly as it came
+                ["inAppPurchasePricePoint"] = AscHttp.Link("inAppPurchasePricePoints", (string)pricePoint["id"]!),
+            },
         };
-        return new InAppPurchasePriceScheduleCreateRequestIncludedInner(priceInlineCreate);
-    }
 
-    private async Task PushNewSchedule(InAppPurchaseV2 iap, string baseTerritoryId, List<InAppPurchasePriceScheduleCreateRequestIncludedInner> prices, bool verbose)
+    private async Task PushNewSchedule(JsonNode iap, string baseTerritoryId, List<JsonObject> prices, bool verbose)
     {
-        var schedulesApi = new InAppPurchasePriceSchedulesApi(Service);
+        var request = new JsonObject
+        {
+            ["data"] = new JsonObject
+            {
+                ["type"] = "inAppPurchasePriceSchedules",
+                ["relationships"] = new JsonObject
+                {
+                    ["inAppPurchase"] = AscHttp.Link("inAppPurchases", (string)iap["id"]!),
+                    ["baseTerritory"] = AscHttp.Link("territories", baseTerritoryId),
+                    ["manualPrices"] = AscHttp.LinkMany("inAppPurchasePrices", prices.Select(p => (string)p["id"]!).ToList()),
+                },
+            },
+            ["included"] = new JsonArray(prices.Select(p => (JsonNode)p).ToArray()),
+        };
 
-        var relationships = new InAppPurchasePriceScheduleCreateRequestDataRelationships(
-            inAppPurchase: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
-                data: new(
-                    id: iap.Id,
-                    type: AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases
-                )
-            ),
-            baseTerritory: new AppPriceScheduleCreateRequestDataRelationshipsBaseTerritory(
-                data: new(
-                    id: baseTerritoryId,
-                    type: AppPricePointV3RelationshipsTerritoryData.TypeEnum.Territories
-                )
-            ),
-            manualPrices: new InAppPurchasePriceScheduleCreateRequestDataRelationshipsManualPrices(
-                data: prices.Select(p =>
-                    new InAppPurchasePriceScheduleRelationshipsManualPricesDataInner(
-                        type: InAppPurchasePriceScheduleRelationshipsManualPricesDataInner.TypeEnum.InAppPurchasePrices,
-                        id: p.GetInAppPurchasePriceInlineCreate().Id
-                    )
-                ).ToList()
-            )
-        );
-
-        var request = new InAppPurchasePriceScheduleCreateRequest(
-            data: new InAppPurchasePriceScheduleCreateRequestData(
-                type: InAppPurchasePriceScheduleCreateRequestData.TypeEnum.InAppPurchasePriceSchedules,
-                relationships: relationships
-            ),
-            included: prices
-        );
-
-        Console.WriteLine($"Sending Create Schedule Request for {iap.Attributes.ProductId} ...");
+        Console.WriteLine($"Sending Create Schedule Request for {(string?)iap["attributes"]?["productId"]} ...");
 
         try
         {
-            var response = await schedulesApi.InAppPurchasePriceSchedulesCreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v1/inAppPurchasePriceSchedules", request);
 
             if (verbose)
             {
                 Console.WriteLine($"[SUCCESS] Schedule created successfully!");
-                Console.WriteLine($"   -> New Schedule ID: {response.Data.Id}");
-                Console.WriteLine($"   -> Link: {response.Data.Links.Self}");
+                Console.WriteLine($"   -> New Schedule ID: {(string?)response["data"]?["id"]}");
+                Console.WriteLine($"   -> Link: {(string?)response["data"]?["links"]?["self"]}");
 
-                if (response.Included != null)
-                    Console.WriteLine($"   -> Included items count: {response.Included.Count}");
+                if (response["included"] is JsonArray included)
+                    Console.WriteLine($"   -> Included items count: {included.Count}");
             }
         }
-        catch (ApiException ex)
+        catch (AscApiException ex)
         {
             Console.WriteLine($"[API ERROR] {ex.Message}");
-            Console.WriteLine($"Status: {ex.ErrorCode}");
-            Console.WriteLine($"Response Body: {ex.ErrorContent}");
+            Console.WriteLine($"Status: {ex.StatusCode}");
+            Console.WriteLine($"Response Body: {ex.ResponseBody}");
         }
         catch (Exception ex)
         {

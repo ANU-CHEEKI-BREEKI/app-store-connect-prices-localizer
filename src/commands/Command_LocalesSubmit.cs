@@ -1,7 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
 using System.Text.Json.Nodes;
-using AppStoreConnect.Net.Model;
 
 /// <summary>
 /// Sends everything that is waiting to App Store Connect review.
@@ -89,12 +86,16 @@ public class Command_LocalesSubmit : GameCenterCommandBase
     }
 
     /// <summary>states in which a product is already on its way, so submitting it again is noise</summary>
-    private static readonly InAppPurchaseState[] AlreadyOnItsWay =
+    private static readonly string[] AlreadyOnItsWay =
     {
-        InAppPurchaseState.WAITINGFORREVIEW,
-        InAppPurchaseState.INREVIEW,
-        InAppPurchaseState.PENDINGBINARYAPPROVAL,
+        "WAITING_FOR_REVIEW",
+        "IN_REVIEW",
+        "PENDING_BINARY_APPROVAL",
     };
+
+    /// <summary>the state the way the generated client printed it: the enum names had no underscores</summary>
+    private static string? StateName(string? state)
+        => state?.Replace("_", "");
 
     /// <summary>
     /// An approved product stays APPROVED when a language is added to it: the new text carries its
@@ -105,13 +106,12 @@ public class Command_LocalesSubmit : GameCenterCommandBase
     /// PREPARE_FOR_SUBMISSION while the console already says 'Waiting for Review'. Which is why
     /// this path is behind --texts, and running it twice is not safe.
     /// </summary>
-    private async Task<int> PendingLocalizationsAsync(InAppPurchaseV2 product)
+    private async Task<int> PendingLocalizationsAsync(JsonNode? product)
     {
-        var api = new InAppPurchasesApi(Service);
-        var response = await api.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(product.Id, limit: 200);
+        var response = await Http.GetAsync($"/v2/inAppPurchases/{(string?)product?["id"]}/inAppPurchaseLocalizations?limit=200");
 
-        return (response?.Data ?? new())
-            .Count(l => l.Attributes?.State == InAppPurchaseLocalizationAttributes.StateEnum.PREPAREFORSUBMISSION);
+        return (response["data"] as JsonArray ?? new JsonArray())
+            .Count(l => (string?)l?["attributes"]?["state"] == "PREPARE_FOR_SUBMISSION");
     }
 
     private async Task SubmitIapsAsync()
@@ -121,55 +121,47 @@ public class Command_LocalesSubmit : GameCenterCommandBase
         Console.WriteLine();
         Console.WriteLine("   -> In-App Purchases...");
 
-        var appsApi = new AppsApi(Service);
+        var page = await Http.GetPagedAsync($"/v1/apps/{Config.AppId}/inAppPurchasesV2?limit=200");
 
-        var products = await FetchAllPagesAsync<InAppPurchasesV2Response, InAppPurchaseV2>(
-            appsApi.AsynchronousClient,
-            appsApi.Configuration,
-            () => appsApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            Verbose
-        );
+        var products = FilterByIap(page.Data, p => (string?)p?["attributes"]?["productId"]);
 
-        products = FilterByIap(products, p => p.Attributes?.ProductId);
-
-        var ready = new List<InAppPurchaseV2>();
+        var ready = new List<JsonNode?>();
 
         foreach (var product in products)
         {
-            var state = product.Attributes?.State;
+            var productId = (string?)product?["attributes"]?["productId"];
+            var state = (string?)product?["attributes"]?["state"];
 
-            if (state is not null && AlreadyOnItsWay.Contains(state.Value))
+            if (state is not null && AlreadyOnItsWay.Contains(state))
             {
                 if (Verbose)
-                    Console.WriteLine($"      [SAME] {product.Attributes?.ProductId} is already {state}.");
+                    Console.WriteLine($"      [SAME] {productId} is already {StateName(state)}.");
                 continue;
             }
 
-            if (state == InAppPurchaseState.READYTOSUBMIT)
+            if (state == "READY_TO_SUBMIT")
             {
                 ready.Add(product);
                 continue;
             }
 
-            if (state == InAppPurchaseState.APPROVED && texts)
+            if (state == "APPROVED" && texts)
             {
                 var pending = await PendingLocalizationsAsync(product);
 
                 if (pending > 0)
                 {
-                    Console.WriteLine($"      [TEXT] {product.Attributes?.ProductId} is approved, {pending} language(s) still to be submitted.");
+                    Console.WriteLine($"      [TEXT] {productId} is approved, {pending} language(s) still to be submitted.");
                     ready.Add(product);
                 }
                 else if (Verbose)
-                    Console.WriteLine($"      [SAME] {product.Attributes?.ProductId} is already {state}.");
+                    Console.WriteLine($"      [SAME] {productId} is already {StateName(state)}.");
 
                 continue;
             }
 
             if (Verbose)
-                Console.WriteLine($"      [SKIP] {product.Attributes?.ProductId} is {state}, not ready to submit.");
+                Console.WriteLine($"      [SKIP] {productId} is {StateName(state)}, not ready to submit.");
         }
 
         if (ready.Count == 0)
@@ -178,23 +170,22 @@ public class Command_LocalesSubmit : GameCenterCommandBase
             return;
         }
 
-        await SubmitProductsAsync(Service, ready, DryRun, Verbose);
+        await SubmitProductsAsync(Http, ready, DryRun, Verbose);
     }
 
     /// <summary>
     /// Submits products for review, one submission each. Shared with 'locales import iaps --submit',
     /// which passes exactly the products it just changed
     /// </summary>
-    public static async Task SubmitProductsAsync(AppStoreConnectConfiguration service, IEnumerable<InAppPurchaseV2> products, bool dryRun, bool verbose)
+    public static async Task SubmitProductsAsync(AscHttp http, IEnumerable<JsonNode?> products, bool dryRun, bool verbose)
     {
-        var api = new InAppPurchaseSubmissionsApi(service);
-
         var submitted = 0;
         var failed = 0;
 
         foreach (var product in products)
         {
-            var productId = product.Attributes?.ProductId ?? product.Id;
+            var id = (string?)product?["id"] ?? "";
+            var productId = (string?)product?["attributes"]?["productId"] ?? id;
 
             Console.WriteLine($"      [SEND] {productId}");
 
@@ -206,21 +197,11 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
             try
             {
-                var request = new InAppPurchaseSubmissionCreateRequest(
-                    new InAppPurchaseSubmissionCreateRequestData(
-                        InAppPurchaseSubmissionCreateRequestData.TypeEnum.InAppPurchaseSubmissions,
-                        new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationships(
-                            inAppPurchaseV2: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
-                                new AppRelationshipsInAppPurchasesDataInner(
-                                    AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases,
-                                    product.Id
-                                )
-                            )
-                        )
-                    )
-                );
+                await http.PostAsync("/v1/inAppPurchaseSubmissions", AscHttp.Body(
+                    "inAppPurchaseSubmissions",
+                    new JsonObject { ["inAppPurchaseV2"] = AscHttp.Link("inAppPurchases", id) }
+                ));
 
-                await api.InAppPurchaseSubmissionsCreateInstanceAsync(request);
                 submitted++;
             }
             catch (Exception ex)
@@ -237,8 +218,8 @@ public class Command_LocalesSubmit : GameCenterCommandBase
     /// Same product list, but taken straight from what an import changed rather than from the api.
     /// The import holds them as IapTexts, which is where the real product sits
     /// </summary>
-    public static Task SubmitProductsAsync(AppStoreConnectConfiguration service, IEnumerable<IapLocalesCommandBase.IapTexts> products, bool dryRun, bool verbose)
-        => SubmitProductsAsync(service, products.Select(p => p.Product), dryRun, verbose);
+    public static Task SubmitProductsAsync(AscHttp http, IEnumerable<IapLocalesCommandBase.IapTexts> products, bool dryRun, bool verbose)
+        => SubmitProductsAsync(http, products.Select(p => (JsonNode?)p.Product), dryRun, verbose);
 
     /// <summary>
     /// Puts every achievement that has something new into the open review submission, without
@@ -262,14 +243,13 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
         var only = new HashSet<string>(ParseList("--achievement"), StringComparer.Ordinal);
 
-        var http = new AscHttp(Service);
         var toAdd = new List<(Achievement Achievement, string VersionId)>();
         var inDraft = 0;
         var skipped = 0;
 
         foreach (var achievement in achievements)
         {
-            var versions = await http.GetAsync($"/v2/gameCenterAchievements/{achievement.Data.Id}/versions?fields[gameCenterAchievementVersions]=version,state&limit=50");
+            var versions = await Http.GetAsync($"/v2/gameCenterAchievements/{achievement.Id}/versions?fields[gameCenterAchievementVersions]=version,state&limit=50");
             var latest = (versions["data"] as JsonArray)?
                 .OrderByDescending(v => (int?)v?["attributes"]?["version"] ?? 0)
                 .FirstOrDefault();
@@ -319,9 +299,9 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
         var platform = Args.TryGetOption("--platform", "IOS").ToUpperInvariant();
 
-        // the generated client chokes on a submission that was never submitted (no submittedDate),
-        // so the draft is looked up and made by hand
-        var submissions = await http.GetAsync($"/v1/reviewSubmissions?filter[app]={Config.AppId}&filter[platform]={platform}&filter[state]=READY_FOR_REVIEW&limit=50");
+        // a submission that was never submitted has no submittedDate, and the generated client
+        // choked on that, so the draft is looked up and made by hand
+        var submissions = await Http.GetAsync($"/v1/reviewSubmissions?filter[app]={Config.AppId}&filter[platform]={platform}&filter[state]=READY_FOR_REVIEW&limit=50");
         var openId = (string?)(submissions["data"] as JsonArray)?.FirstOrDefault()?["id"];
 
         Console.WriteLine(openId is null
@@ -335,7 +315,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
         if (submissionId is null)
         {
-            var created = await http.PostAsync("/v1/reviewSubmissions", AscHttp.Body(
+            var created = await Http.PostAsync("/v1/reviewSubmissions", AscHttp.Body(
                 "reviewSubmissions",
                 new JsonObject { ["app"] = AscHttp.Link("apps", Config.AppId) },
                 new JsonObject { ["platform"] = platform }
@@ -357,14 +337,14 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
                 if (string.IsNullOrEmpty(versionId))
                 {
-                    var created = await http.PostAsync("/v2/gameCenterAchievementVersions", AscHttp.Body(
+                    var created = await Http.PostAsync("/v2/gameCenterAchievementVersions", AscHttp.Body(
                         "gameCenterAchievementVersions",
-                        new JsonObject { ["achievement"] = AscHttp.Link("gameCenterAchievements", achievement.Data.Id) }
+                        new JsonObject { ["achievement"] = AscHttp.Link("gameCenterAchievements", achievement.Id) }
                     ));
                     versionId = (string?)created["data"]?["id"] ?? throw new Exception("no version id in the response");
                 }
 
-                await http.PostAsync("/v1/reviewSubmissionItems", AscHttp.Body(
+                await Http.PostAsync("/v1/reviewSubmissionItems", AscHttp.Body(
                     "reviewSubmissionItems",
                     new JsonObject
                     {
@@ -386,10 +366,10 @@ public class Command_LocalesSubmit : GameCenterCommandBase
     }
 
     /// <summary>a review submission that can still take items</summary>
-    private static readonly ReviewSubmissionAttributes.StateEnum[] OpenStates =
+    private static readonly string[] OpenStates =
     {
-        ReviewSubmissionAttributes.StateEnum.READYFORREVIEW,
-        ReviewSubmissionAttributes.StateEnum.UNRESOLVEDISSUES,
+        "READY_FOR_REVIEW",
+        "UNRESOLVED_ISSUES",
     };
 
     private async Task SubmitVersionAsync()
@@ -399,16 +379,13 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
         var platform = Args.TryGetOption("--platform", "IOS").ToUpperInvariant();
 
-        var versionsResponse = await new AppsApi(Service).AppsAppStoreVersionsGetToManyRelatedAsync(
-            Config.AppId,
-            filterPlatform: new List<string> { platform },
-            fieldsAppStoreVersions: new List<string> { "versionString", "appVersionState", "appStoreState", "platform", "createdDate" },
-            limit: 50
+        var versionsResponse = await Http.GetAsync(
+            $"/v1/apps/{Config.AppId}/appStoreVersions?filter[platform]={platform}&fields[appStoreVersions]=versionString,appVersionState,appStoreState,platform,createdDate&limit=50"
         );
 
-        var version = (versionsResponse.Data ?? new())
-            .OrderByDescending(v => v.Attributes?.CreatedDate ?? DateTimeOffset.MinValue)
-            .FirstOrDefault(v => v.Attributes?.AppVersionState == AppVersionState.PREPAREFORSUBMISSION);
+        var version = (versionsResponse["data"] as JsonArray ?? new JsonArray())
+            .OrderByDescending(CreatedDate)
+            .FirstOrDefault(v => (string?)v?["attributes"]?["appVersionState"] == "PREPARE_FOR_SUBMISSION");
 
         if (version is null)
         {
@@ -416,19 +393,18 @@ public class Command_LocalesSubmit : GameCenterCommandBase
             return;
         }
 
-        Console.WriteLine($"      version {version.Attributes?.VersionString}");
+        Console.WriteLine($"      version {(string?)version["attributes"]?["versionString"]}");
 
-        var submissionsApi = new ReviewSubmissionsApi(Service);
+        var versionId = (string?)version["id"] ?? "";
 
-        var open = (await submissionsApi.ReviewSubmissionsGetCollectionAsync(
-                filterApp: new List<string> { Config.AppId },
-                filterPlatform: new List<string> { platform },
-                limit: 50,
-                include: new List<string> { "items" }
-            ))?.Data
-            ?.FirstOrDefault(s => s.Attributes?.State is { } state && OpenStates.Contains(state));
+        var submissions = await Http.GetAsync(
+            $"/v1/reviewSubmissions?filter[app]={Config.AppId}&filter[platform]={platform}&limit=50&include=items"
+        );
 
-        if (open is not null && HasVersion(open, version.Id))
+        var open = (submissions["data"] as JsonArray ?? new JsonArray())
+            .FirstOrDefault(s => (string?)s?["attributes"]?["state"] is { } state && OpenStates.Contains(state));
+
+        if (open is not null && HasVersion(open, versionId))
         {
             Console.WriteLine("      already in the open review submission, nothing to add.");
             return;
@@ -436,49 +412,31 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
         Console.WriteLine(open is null
             ? "      [NEW]  review submission"
-            : $"      [ADD]  to the open review submission {open.Id}");
+            : $"      [ADD]  to the open review submission {(string?)open["id"]}");
 
         if (DryRun)
             return;
 
         try
         {
-            var submissionId = open?.Id ?? await CreateSubmissionAsync(submissionsApi, platform);
+            var submissionId = (string?)open?["id"] ?? await CreateSubmissionAsync(platform);
             if (string.IsNullOrWhiteSpace(submissionId))
                 return;
 
-            await new ReviewSubmissionItemsApi(Service).ReviewSubmissionItemsCreateInstanceAsync(
-                new ReviewSubmissionItemCreateRequest(
-                    new ReviewSubmissionItemCreateRequestData(
-                        ReviewSubmissionItemCreateRequestData.TypeEnum.ReviewSubmissionItems,
-                        new ReviewSubmissionItemCreateRequestDataRelationships(
-                            reviewSubmission: new ReviewSubmissionItemCreateRequestDataRelationshipsReviewSubmission(
-                                new AppRelationshipsReviewSubmissionsDataInner(
-                                    AppRelationshipsReviewSubmissionsDataInner.TypeEnum.ReviewSubmissions,
-                                    submissionId
-                                )
-                            ),
-                            appStoreVersion: new AppClipDefaultExperienceCreateRequestDataRelationshipsReleaseWithAppStoreVersion(
-                                new AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersionData(
-                                    AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersionData.TypeEnum.AppStoreVersions,
-                                    version.Id
-                                )
-                            )
-                        )
-                    )
-                )
-            );
+            await Http.PostAsync("/v1/reviewSubmissionItems", AscHttp.Body(
+                "reviewSubmissionItems",
+                new JsonObject
+                {
+                    ["reviewSubmission"] = AscHttp.Link("reviewSubmissions", submissionId),
+                    ["appStoreVersion"] = AscHttp.Link("appStoreVersions", versionId),
+                }
+            ));
 
-            await submissionsApi.ReviewSubmissionsUpdateInstanceAsync(
+            await Http.PatchAsync($"/v1/reviewSubmissions/{submissionId}", AscHttp.BodyWithAttributes(
+                "reviewSubmissions",
                 submissionId,
-                new ReviewSubmissionUpdateRequest(
-                    new ReviewSubmissionUpdateRequestData(
-                        ReviewSubmissionUpdateRequestData.TypeEnum.ReviewSubmissions,
-                        submissionId,
-                        new ReviewSubmissionUpdateRequestDataAttributes(submitted: true)
-                    )
-                )
-            );
+                new JsonObject { ["submitted"] = true }
+            ));
 
             Console.WriteLine($"      submitted, review submission {submissionId}.");
         }
@@ -488,36 +446,29 @@ public class Command_LocalesSubmit : GameCenterCommandBase
         }
     }
 
-    private async Task<string?> CreateSubmissionAsync(ReviewSubmissionsApi api, string platform)
+    private async Task<string?> CreateSubmissionAsync(string platform)
     {
-        var response = await api.ReviewSubmissionsCreateInstanceAsync(
-            new ReviewSubmissionCreateRequest(
-                new ReviewSubmissionCreateRequestData(
-                    ReviewSubmissionCreateRequestData.TypeEnum.ReviewSubmissions,
-                    new ReviewSubmissionCreateRequestDataAttributes(ParsePlatform(platform)),
-                    new AccessibilityDeclarationCreateRequestDataRelationships(
-                        new AccessibilityDeclarationCreateRequestDataRelationshipsApp(
-                            new AccessibilityDeclarationCreateRequestDataRelationshipsAppData(
-                                AccessibilityDeclarationCreateRequestDataRelationshipsAppData.TypeEnum.Apps,
-                                Config.AppId
-                            )
-                        )
-                    )
-                )
-            )
-        );
+        var response = await Http.PostAsync("/v1/reviewSubmissions", AscHttp.Body(
+            "reviewSubmissions",
+            new JsonObject { ["app"] = AscHttp.Link("apps", Config.AppId) },
+            new JsonObject { ["platform"] = ParsePlatform(platform) }
+        ));
 
-        return response?.Data?.Id;
+        return (string?)response["data"]?["id"];
     }
 
-    private static Platform ParsePlatform(string platform) => platform switch
+    private static string ParsePlatform(string platform) => platform switch
     {
-        "MAC_OS" or "MACOS" => Platform.MACOS,
-        "TV_OS" or "TVOS" => Platform.TVOS,
-        "VISION_OS" or "VISIONOS" => Platform.VISIONOS,
-        _ => Platform.IOS,
+        "MAC_OS" or "MACOS" => "MAC_OS",
+        "TV_OS" or "TVOS" => "TV_OS",
+        "VISION_OS" or "VISIONOS" => "VISION_OS",
+        _ => "IOS",
     };
 
-    private static bool HasVersion(ReviewSubmission submission, string versionId)
-        => submission.Relationships?.Items?.Data?.Any(i => string.Equals(i.Id, versionId, StringComparison.Ordinal)) == true;
+    private static DateTimeOffset CreatedDate(JsonNode? version)
+        => DateTimeOffset.TryParse((string?)version?["attributes"]?["createdDate"], out var date) ? date : DateTimeOffset.MinValue;
+
+    private static bool HasVersion(JsonNode submission, string versionId)
+        => (submission["relationships"]?["items"]?["data"] as JsonArray)?
+            .Any(i => string.Equals((string?)i?["id"], versionId, StringComparison.Ordinal)) == true;
 }

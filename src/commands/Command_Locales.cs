@@ -47,7 +47,7 @@ public class Command_Locales : CommandBase
 
     protected override Task InternalExecuteAsync()
     {
-        Sub.Initialize(Service, Config, Args);
+        Sub.Initialize(Auth, Config, Args);
         return Sub.ExecuteAsync();
     }
 

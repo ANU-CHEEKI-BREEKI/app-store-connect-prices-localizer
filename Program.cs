@@ -1,4 +1,3 @@
-using AppStoreConnect.Net.Client;
 
 var commands = new CommandsCollection()
 {
@@ -122,7 +121,7 @@ config.Iap = args.TryGetOption("--iap", config.Iap);
 // config.DefaultCurrency = args.TryGetOption("--currency", config.DefaultCurrency);
 
 
-var service = new AppStoreConnectConfiguration(
+var service = new AscAuth(
     config.KeyId,
     config.IssuerId,
     await File.ReadAllTextAsync(config.PrivateKeyFilePath)

@@ -1,7 +1,5 @@
 using System.Globalization;
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Dumps the existing In-App Purchases into the same csv 'create-iaps' reads, so a new product
@@ -87,7 +85,7 @@ public class Command_ExportIaps : CommandBase
 
             var products = await GetAllIapsAsync(verbose);
 
-            products = FilterByIap(products, p => p.Attributes?.ProductId);
+            products = FilterByIap(products, p => (string?)p?["attributes"]?["productId"]);
 
             if (products.Count == 0)
             {
@@ -103,7 +101,7 @@ public class Command_ExportIaps : CommandBase
             var rows = new List<List<string>>();
 
             foreach (var product in products)
-                rows.Add(await BuildRow(product, locale, region, verbose));
+                rows.Add(await BuildRow(product!, locale, region, verbose));
 
             await CommandLinesUtils.SaveCsv(path, Headers, rows);
 
@@ -117,51 +115,42 @@ public class Command_ExportIaps : CommandBase
         }
     }
 
-    private async Task<List<InAppPurchaseV2>> GetAllIapsAsync(bool verbose)
+    private async Task<List<JsonNode?>> GetAllIapsAsync(bool verbose)
     {
-        var api = new AppsApi(Service);
+        var page = await Http.GetPagedAsync($"/v1/apps/{Config.AppId}/inAppPurchasesV2?limit=200");
 
-        var products = await FetchAllPagesAsync<InAppPurchasesV2Response, InAppPurchaseV2>(
-            api.AsynchronousClient,
-            api.Configuration,
-            () => api.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
-
-        return products
-            .Where(p => !string.IsNullOrEmpty(p.Attributes?.ProductId))
+        return page.Data
+            .Where(p => !string.IsNullOrEmpty((string?)p?["attributes"]?["productId"]))
             .ToList();
     }
 
-    private async Task<List<string>> BuildRow(InAppPurchaseV2 product, string locale, string region, bool verbose)
+    private async Task<List<string>> BuildRow(JsonNode product, string locale, string region, bool verbose)
     {
-        var productId = product.Attributes?.ProductId ?? "";
+        var productId = (string?)product["attributes"]?["productId"] ?? "";
 
         var localization = await GetLocalization(product, locale, verbose);
 
         if (!_localeWarned
             && localization is not null
-            && !string.Equals(localization.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase))
+            && !string.Equals((string?)localization["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"Warning: no '{locale}' localization, exporting '{localization.Attributes?.Locale}' instead. Set 'DefaultLocale' in your config.json, or pass --locale.");
+            Console.WriteLine($"Warning: no '{locale}' localization, exporting '{(string?)localization["attributes"]?["locale"]}' instead. Set 'DefaultLocale' in your config.json, or pass --locale.");
             _localeWarned = true;
         }
 
         var price = await GetBasePrice(product, region, verbose);
 
         if (verbose)
-            Console.WriteLine($"      {productId}: price '{price}', localization '{localization?.Attributes?.Locale ?? "none"}'");
+            Console.WriteLine($"      {productId}: price '{price}', localization '{(string?)localization?["attributes"]?["locale"] ?? "none"}'");
 
         return
         [
             productId,
-            product.Attributes?.Name ?? "",
-            FormatType(product.Attributes?.InAppPurchaseType),
+            (string?)product["attributes"]?["name"] ?? "",
+            FormatType((string?)product["attributes"]?["inAppPurchaseType"]),
             price,
-            localization?.Attributes?.Name ?? "",
-            localization?.Attributes?.Description ?? "",
+            (string?)localization?["attributes"]?["name"] ?? "",
+            (string?)localization?["attributes"]?["description"] ?? "",
         ];
     }
 
@@ -169,27 +158,20 @@ public class Command_ExportIaps : CommandBase
     /// the localization in the wanted locale, or any other one, so a product that was never
     /// localized in it still exports its texts instead of two empty cells
     /// </summary>
-    private async Task<InAppPurchaseLocalization?> GetLocalization(InAppPurchaseV2 product, string locale, bool verbose)
+    private async Task<JsonNode?> GetLocalization(JsonNode product, string locale, bool verbose)
     {
         try
         {
-            var api = new InAppPurchasesApi(Service);
+            var page = await Http.GetPagedAsync($"/v2/inAppPurchases/{(string?)product["id"]}/inAppPurchaseLocalizations?limit=200");
 
-            var localizations = await FetchAllPagesAsync<InAppPurchaseLocalizationsResponse, InAppPurchaseLocalization>(
-                api.AsynchronousClient,
-                api.Configuration,
-                () => api.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(product.Id, limit: 200),
-                r => r.Data,
-                r => r.Links?.Next,
-                verbose
-            );
+            var localizations = page.Data;
 
-            return localizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase))
+            return localizations.FirstOrDefault(l => string.Equals((string?)l?["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase))
                    ?? localizations.FirstOrDefault();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Warning: could not read localizations of {product.Attributes?.ProductId}: {ex.Message}");
+            Console.WriteLine($"Warning: could not read localizations of {(string?)product["attributes"]?["productId"]}: {ex.Message}");
             return null;
         }
     }
@@ -200,46 +182,41 @@ public class Command_ExportIaps : CommandBase
     /// Unlike the 'list' command this must never throw: a product that has no price schedule yet,
     /// or is not sold in the default region, still has to produce a row, just with an empty price cell
     /// </summary>
-    private async Task<string> GetBasePrice(InAppPurchaseV2 product, string region, bool verbose)
+    private async Task<string> GetBasePrice(JsonNode product, string region, bool verbose)
     {
-        var productId = product.Attributes?.ProductId;
+        var productId = (string?)product["attributes"]?["productId"];
 
         try
         {
-            var iapApi = new InAppPurchasesApi(Service);
-
-            var scheduleResponse = await iapApi.InAppPurchasesV2IapPriceScheduleGetToOneRelatedAsync(product.Id);
-            if (scheduleResponse?.Data is null)
+            var scheduleResponse = await Http.GetAsync($"/v2/inAppPurchases/{(string?)product["id"]}/iapPriceSchedule");
+            if (scheduleResponse["data"] is null)
             {
                 Console.WriteLine($"Warning: {productId} has no price schedule, the default_price cell is left empty.");
                 return "";
             }
 
-            var pricesResponse = await new InAppPurchasePriceSchedulesApi(Service)
-                .InAppPurchasePriceSchedulesManualPricesGetToManyRelatedAsync(
-                    scheduleResponse.Data.Id,
-                    filterTerritory: new List<string> { region },
-                    include: new List<string> { "inAppPurchasePricePoint", "territory" }
-                );
+            var pricesResponse = await Http.GetAsync(
+                $"/v1/inAppPurchasePriceSchedules/{(string?)scheduleResponse["data"]?["id"]}/manualPrices?filter[territory]={region}&include=inAppPurchasePricePoint,territory"
+            );
 
-            var pricePoint = pricesResponse?.Included
-                ?.Select(i => i.ActualInstance)
-                .OfType<InAppPurchasePricePoint>()
-                .FirstOrDefault();
+            var pricePoint = (pricesResponse["included"] as JsonArray ?? new JsonArray())
+                .FirstOrDefault(i => (string?)i?["type"] == "inAppPurchasePricePoints");
 
-            if (pricePoint?.Attributes?.CustomerPrice is null)
+            var customerPrice = (string?)pricePoint?["attributes"]?["customerPrice"];
+
+            if (customerPrice is null)
             {
                 Console.WriteLine($"Warning: {productId} has no manual price for territory {region}, the default_price cell is left empty.");
                 return "";
             }
 
-            return FormatPrice(pricePoint.Attributes.CustomerPrice);
+            return FormatPrice(customerPrice);
         }
-        catch (ApiException ex)
+        catch (AscApiException ex)
         {
             Console.WriteLine($"Warning: could not read the price of {productId}: {ex.Message}");
             if (verbose)
-                Console.WriteLine($"         {ex.ErrorContent}");
+                Console.WriteLine($"         {ex.ResponseBody}");
             return "";
         }
         catch (Exception ex)
@@ -259,13 +236,13 @@ public class Command_ExportIaps : CommandBase
             : customerPrice;
 
     /// <summary>
-    /// the csv spelling 'create-iaps' expects, not the enum name
+    /// the csv spelling 'create-iaps' expects, not the api's underscored name
     /// </summary>
-    private static string FormatType(InAppPurchaseType? type) => type switch
+    private static string FormatType(string? type) => type switch
     {
-        InAppPurchaseType.CONSUMABLE => "consumable",
-        InAppPurchaseType.NONCONSUMABLE => "non-consumable",
-        InAppPurchaseType.NONRENEWINGSUBSCRIPTION => "non-renewing-subscription",
+        "CONSUMABLE" => "consumable",
+        "NON_CONSUMABLE" => "non-consumable",
+        "NON_RENEWING_SUBSCRIPTION" => "non-renewing-subscription",
         _ => "",
     };
 }
