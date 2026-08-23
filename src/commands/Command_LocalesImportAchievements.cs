@@ -36,7 +36,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
         CommandLinesUtils.PrintDescription("The whole table is validated against the App Store Connect limits first, and nothing at all is sent when something would be rejected. Pass --force to send everything that is valid and skip only the offending values.");
         CommandLinesUtils.PrintDescription("Every language that ends up without an image gets the image of the primary language, downloaded once per achievement and uploaded to each. App Store Connect has no way to share one image between languages, so the bytes really do make the round trip. Pass --no-images to leave images alone.");
         CommandLinesUtils.PrintDescription("A new language needs a title and a pre-earned description, so one that would end up with less is skipped with a warning rather than sent and rejected.");
-        CommandLinesUtils.PrintDescription("Nothing is released by default: the texts land in App Store Connect as 'Prepare for Submission'. Pass --submit, or run 'locales submit --achievements' later.");
+        CommandLinesUtils.PrintDescription("A language added to a live achievement is live the moment it lands, no review. A new achievement is 'Prepare for Submission' until it is reviewed: pass --submit, or run 'locales submit --achievements' later, then press Submit in the console.");
 
         Console.WriteLine();
         Console.WriteLine("options:");
@@ -50,7 +50,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
         CommandLinesUtils.PrintOption("--force", "Run even though validation found problems: every value that would be rejected is skipped, everything else is sent.");
         CommandLinesUtils.PrintOption("--no-create", "Do not create localizations for locales an achievement does not have yet, skip them instead.");
         CommandLinesUtils.PrintOption("--no-images", "Do not copy the primary language's image onto the languages that have none.");
-        CommandLinesUtils.PrintOption("--submit", "Release every achievement this run changed afterwards, so its languages go live.");
+        CommandLinesUtils.PrintOption("--submit", "Add every new achievement to the open review submission afterwards. The submission itself is sent from the console. A language added to a live achievement needs no review and is live already.");
         CommandLinesUtils.PrintOption("-n|--dry-run", "Print everything that would be changed, without sending a single write request.");
         CommandLinesUtils.PrintOption("-v", "Include additional verbose output");
     }
@@ -152,13 +152,13 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
             if (submit)
             {
                 Console.WriteLine();
-                Console.WriteLine("   -> releasing, so the languages go live...");
+                Console.WriteLine("   -> adding to the review submission...");
                 await ReleaseAsync(changed, failed);
             }
             else if (changed.Count > 0)
             {
                 Console.WriteLine();
-                Console.WriteLine($"{changed.Count} achievement(s) changed and are 'Prepare for Submission'. Run 'locales submit --achievements' to put them in front of players.");
+                Console.WriteLine($"{changed.Count} achievement(s) changed. A live one is live already; a new one waits for 'locales submit --achievements'.");
             }
         }
         catch (Exception ex)
@@ -561,8 +561,9 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
             return;
         }
 
+        // only a new achievement needs review; a language added to a live one is live already
         var submit = new Command_LocalesSubmit();
-        submit.Initialize(Service, Config, Args.Concat(new[] { "--achievements" }).ToArray());
+        submit.Initialize(Service, Config, Args.Where(a => a != "--achievement").Concat(new[] { "--achievements" }).ToArray());
         await submit.ExecuteAsync();
     }
 

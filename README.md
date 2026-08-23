@@ -685,7 +685,7 @@ review is the one step here that cannot be undone by running it again.
     -> In-App Purchases...
        [SEND] com.example.pack_a
     -> Game Center achievements...
-       [SEND] dragon_slayer
+       [ADD]  dragon_slayer
     -> App store version...
        version 1.5.0
        [NEW]  review submission
@@ -698,9 +698,12 @@ together:
 - a language added to an **approved** product leaves the product `APPROVED`, so it is not sent unless you
   pass `--texts`. The api keeps reporting that language as `PREPARE_FOR_SUBMISSION` after it was sent
   (the console says 'Waiting for Review'), so run `--texts` once, not on every pass
-- an **achievement** is not reviewed but *released*, which is what turns its languages from
-  `Prepare for Submission` into `Live`. Achievements that already have a release are skipped, and one
-  whose languages have no image is reported instead of failing
+- an **achievement** language added to a live achievement is **live the moment it is imported** -
+  Game Center text is not reviewed. What does go through review is a *version* of an achievement: a
+  new achievement, or one deliberately given a new version with `--achievement <vendor_id,...>`.
+  Those are added to the open review submission (the console's draft) and **not sent**: press Submit
+  in App Review in the console once the list looks right. A version, once made, cannot be deleted -
+  only reviewed - so nothing here makes one on its own
 - the **app store version** is added to the open review submission, or to a new one, and that
   submission is then submitted
 

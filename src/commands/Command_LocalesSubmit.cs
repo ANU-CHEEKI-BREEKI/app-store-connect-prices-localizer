@@ -1,5 +1,6 @@
 using AppStoreConnect.Net.Api;
 using AppStoreConnect.Net.Client;
+using System.Text.Json.Nodes;
 using AppStoreConnect.Net.Model;
 
 /// <summary>
@@ -8,9 +9,9 @@ using AppStoreConnect.Net.Model;
 /// Three different things, three different mechanisms, and none of them is the button next to the
 /// other two in the console:
 /// - an In-App Purchase gets its own submission, independent of any app version
-/// - a Game Center achievement is not reviewed but released, which is what turns a localization
-///   from 'Prepare for Submission' into 'Live'
-/// - the app store version goes into a review submission, as an item of it
+/// - a Game Center achievement goes into the open review submission as an item, and that submission
+///   is left for the console to send, so the list can be looked at first
+/// - the app store version goes into a review submission, as an item of it, and is submitted
 ///
 /// Kept out of the imports on purpose: a translation is normally imported a few times before it is
 /// right, and review is the one step in this tool that is not free to redo.
@@ -26,7 +27,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("locales submit [--iaps] [--texts] [--achievements] [--app] [--iap <id[,id...]>] [-n] [-v]");
+        Console.WriteLine("locales submit [--iaps] [--texts] [--achievements] [--achievement <id[,id...]>] [--app] [--iap <id[,id...]>] [-n] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -34,7 +35,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
         CommandLinesUtils.PrintDescription(Description);
         CommandLinesUtils.PrintDescription("Without any of the three flags all three are done. With one or more, only those.");
         CommandLinesUtils.PrintDescription("In-App Purchases: every product sitting in READY_TO_SUBMIT gets its own submission, and so does an approved product with a language still in 'Prepare for Submission'. A product already waiting for review or in review is left alone, so running this twice is safe.");
-        CommandLinesUtils.PrintDescription("Achievements: a release is created for every achievement, which is what turns its localizations from 'Prepare for Submission' into 'Live'. An achievement whose languages have no image can not be released and is reported instead.");
+        CommandLinesUtils.PrintDescription("Achievements: every achievement with a version in 'Prepare for Submission' (a new one, or one given a new version) is added to the open review submission, or to a new one. That submission is NOT submitted - press Submit in App Review in the console once the list looks right. A language added to a live achievement does not need any of this: it is live the moment it is imported.");
         CommandLinesUtils.PrintDescription("App store version: the editable version is added to the open review submission, or to a new one, and that submission is then submitted.");
         CommandLinesUtils.PrintDescription("Run with -n first. This is the one command here that can not be undone by running it again.");
 
@@ -43,7 +44,8 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
         CommandLinesUtils.PrintOption("--iaps", "Submit the In-App Purchases only.");
         CommandLinesUtils.PrintOption("--texts", "Also submit approved products that have a language still in 'Prepare for Submission'. The api does not report those languages as submitted afterwards, so run this once.");
-        CommandLinesUtils.PrintOption("--achievements", "Release the Game Center achievements only.");
+        CommandLinesUtils.PrintOption("--achievements", "Add the Game Center achievements to the review submission only.");
+        CommandLinesUtils.PrintOption("--achievement <id[,id...]>", "Live achievements to make a new version of, by vendor identifier, so that version goes into the submission. Rarely needed: a language added to a live achievement is live at once, without review.");
         CommandLinesUtils.PrintOption("--app", "Submit the app store version only.");
         CommandLinesUtils.PrintOption(CommandLinesUtils.IapOptionName, CommandLinesUtils.IapOptionDescription);
         CommandLinesUtils.PrintOption("-n|--dry-run", "Print everything that would be submitted, without sending a single write request.");
@@ -75,7 +77,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
                 await SubmitIapsAsync();
 
             if (wantAchievements)
-                await ReleaseAchievementsAsync();
+                await AddAchievementsToSubmissionAsync();
 
             if (wantApp)
                 await SubmitVersionAsync();
@@ -238,7 +240,12 @@ public class Command_LocalesSubmit : GameCenterCommandBase
     public static Task SubmitProductsAsync(AppStoreConnectConfiguration service, IEnumerable<IapLocalesCommandBase.IapTexts> products, bool dryRun, bool verbose)
         => SubmitProductsAsync(service, products.Select(p => p.Product), dryRun, verbose);
 
-    private async Task ReleaseAchievementsAsync()
+    /// <summary>
+    /// Puts every achievement that has something new into the open review submission, without
+    /// submitting it: that button stays in the console, where the whole list can be looked at first.
+    /// Nothing is released any more - a reviewed achievement goes live on its own.
+    /// </summary>
+    private async Task AddAchievementsToSubmissionAsync()
     {
         Console.WriteLine();
         Console.WriteLine("   -> Game Center achievements...");
@@ -253,138 +260,132 @@ public class Command_LocalesSubmit : GameCenterCommandBase
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(GameCenterDetailId))
-        {
-            Console.WriteLine("[ERROR] no Game Center detail to release against.");
-            return;
-        }
+        var only = new HashSet<string>(ParseList("--achievement"), StringComparer.Ordinal);
 
-        var alreadyReleased = await ReleasedAchievementIdsAsync();
-
-        var api = new GameCenterAchievementReleasesApi(Service);
-
-        var released = 0;
+        var http = new AscHttp(Service);
+        var toAdd = new List<(Achievement Achievement, string VersionId)>();
+        var inDraft = 0;
         var skipped = 0;
-        var failed = 0;
 
         foreach (var achievement in achievements)
         {
-            // a second run should find nothing to do, not send seventy requests App Store Connect
-            // will answer with the release it already has
-            if (alreadyReleased.Contains(achievement.Data.Id))
+            var versions = await http.GetAsync($"/v2/gameCenterAchievements/{achievement.Data.Id}/versions?fields[gameCenterAchievementVersions]=version,state&limit=50");
+            var latest = (versions["data"] as JsonArray)?
+                .OrderByDescending(v => (int?)v?["attributes"]?["version"] ?? 0)
+                .FirstOrDefault();
+
+            var state = (string?)latest?["attributes"]?["state"] ?? "";
+            var versionId = (string?)latest?["id"] ?? "";
+
+            switch (state)
             {
-                if (Verbose)
-                    Console.WriteLine($"      [SAME] {achievement.VendorIdentifier} is already released.");
-                skipped++;
-                continue;
+                case "PREPARE_FOR_SUBMISSION":
+                    toAdd.Add((achievement, versionId));
+                    Console.WriteLine($"      [ADD]  {achievement.VendorIdentifier}");
+                    break;
+
+                case "READY_FOR_REVIEW":
+                    inDraft++;
+                    if (Verbose)
+                        Console.WriteLine($"      [SAME] {achievement.VendorIdentifier} is already in the review submission.");
+                    break;
+
+                // a language added to a live achievement lands inside the live version and is live at
+                // once, no review. A new version is only for a real change, and it is asked for by
+                // name because the api can not tell; once made it can not be deleted, only reviewed
+                case "LIVE" when only.Contains(achievement.VendorIdentifier):
+                    toAdd.Add((achievement, ""));
+                    Console.WriteLine($"      [ADD]  {achievement.VendorIdentifier} (new version)");
+                    break;
+
+                case "LIVE":
+                    skipped++;
+                    if (Verbose)
+                        Console.WriteLine($"      [SKIP] {achievement.VendorIdentifier} is live.");
+                    break;
+
+                default:
+                    skipped++;
+                    if (Verbose)
+                        Console.WriteLine($"      [SKIP] {achievement.VendorIdentifier} is {state}, nothing new.");
+                    break;
             }
+        }
 
-            // a language without an image blocks the release, and the api says so in a way that is
-            // easy to miss among seventy of them
-            var withoutImage = achievement.Localizations.Where(l => achievement.ImageOf(l) is null).ToList();
+        Console.WriteLine($"      {toAdd.Count} to add, {inDraft} already in the submission, {skipped} with nothing new.");
 
-            if (withoutImage.Count > 0)
-            {
-                Console.WriteLine($"      [SKIP] {achievement.VendorIdentifier}: {withoutImage.Count} language(s) have no image ({string.Join(", ", withoutImage.Select(l => l.Attributes?.Locale))})");
-                skipped++;
-                continue;
-            }
+        if (toAdd.Count == 0)
+            return;
 
-            Console.WriteLine($"      [SEND] {achievement.VendorIdentifier}");
+        var platform = Args.TryGetOption("--platform", "IOS").ToUpperInvariant();
 
-            if (DryRun)
-            {
-                released++;
-                continue;
-            }
+        // the generated client chokes on a submission that was never submitted (no submittedDate),
+        // so the draft is looked up and made by hand
+        var submissions = await http.GetAsync($"/v1/reviewSubmissions?filter[app]={Config.AppId}&filter[platform]={platform}&filter[state]=READY_FOR_REVIEW&limit=50");
+        var openId = (string?)(submissions["data"] as JsonArray)?.FirstOrDefault()?["id"];
 
+        Console.WriteLine(openId is null
+            ? "      [NEW]  review submission"
+            : $"      [ADD]  to the open review submission {openId}");
+
+        if (DryRun)
+            return;
+
+        var submissionId = openId;
+
+        if (submissionId is null)
+        {
+            var created = await http.PostAsync("/v1/reviewSubmissions", AscHttp.Body(
+                "reviewSubmissions",
+                new JsonObject { ["app"] = AscHttp.Link("apps", Config.AppId) },
+                new JsonObject { ["platform"] = platform }
+            ));
+            submissionId = (string?)created["data"]?["id"];
+        }
+
+        if (string.IsNullOrWhiteSpace(submissionId))
+            return;
+
+        var added = 0;
+        var failed = 0;
+
+        foreach (var (achievement, knownVersionId) in toAdd)
+        {
             try
             {
-                var request = new GameCenterAchievementReleaseCreateRequest(
-                    new GameCenterAchievementReleaseCreateRequestData(
-                        GameCenterAchievementReleaseCreateRequestData.TypeEnum.GameCenterAchievementReleases,
-                        new GameCenterAchievementReleaseCreateRequestDataRelationships(
-                            gameCenterDetail: new GameCenterAchievementReleaseCreateRequestDataRelationshipsGameCenterDetail(
-                                new AppRelationshipsGameCenterDetailData(
-                                    AppRelationshipsGameCenterDetailData.TypeEnum.GameCenterDetails,
-                                    GameCenterDetailId
-                                )
-                            ),
-                            gameCenterAchievement: new GameCenterAchievementLocalizationCreateRequestDataRelationshipsGameCenterAchievement(
-                                new GameCenterAchievementLocalizationRelationshipsGameCenterAchievementData(
-                                    GameCenterAchievementLocalizationRelationshipsGameCenterAchievementData.TypeEnum.GameCenterAchievements,
-                                    achievement.Data.Id
-                                )
-                            )
-                        )
-                    )
-                );
+                var versionId = knownVersionId;
 
-                await api.GameCenterAchievementReleasesCreateInstanceAsync(request);
-                released++;
-            }
-            catch (ApiException ex) when (ex.ErrorCode == 409)
-            {
-                // already released, which is exactly what a second run should find
-                if (Verbose)
-                    Console.WriteLine($"      [SAME] {achievement.VendorIdentifier} is already released.");
-                skipped++;
+                if (string.IsNullOrEmpty(versionId))
+                {
+                    var created = await http.PostAsync("/v2/gameCenterAchievementVersions", AscHttp.Body(
+                        "gameCenterAchievementVersions",
+                        new JsonObject { ["achievement"] = AscHttp.Link("gameCenterAchievements", achievement.Data.Id) }
+                    ));
+                    versionId = (string?)created["data"]?["id"] ?? throw new Exception("no version id in the response");
+                }
+
+                await http.PostAsync("/v1/reviewSubmissionItems", AscHttp.Body(
+                    "reviewSubmissionItems",
+                    new JsonObject
+                    {
+                        ["reviewSubmission"] = AscHttp.Link("reviewSubmissions", submissionId),
+                        ["gameCenterAchievementVersion"] = AscHttp.Link("gameCenterAchievementVersions", versionId),
+                    }
+                ));
+                added++;
             }
             catch (Exception ex)
             {
-                PrintApiError($"failed to release {achievement.VendorIdentifier}", ex);
+                PrintApiError($"failed to add {achievement.VendorIdentifier}", ex);
                 failed++;
             }
         }
 
-        Console.WriteLine($"      {released} achievement(s) released, {skipped} skipped, {failed} failed.");
+        Console.WriteLine($"      {added} achievement(s) added to review submission {submissionId}, {failed} failed.");
+        Console.WriteLine("      not submitted: open App Review in App Store Connect, check the list and press Submit.");
     }
 
-    /// <summary>
-    /// the achievements that already have a release on this game center detail. Reading them is one
-    /// request, and it is what makes running 'submit' twice a no-op instead of seventy writes
-    /// </summary>
-    private async Task<HashSet<string>> ReleasedAchievementIdsAsync()
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-
-        if (string.IsNullOrWhiteSpace(GameCenterDetailId))
-            return result;
-
-        try
-        {
-            var api = new GameCenterDetailsApi(Service);
-
-            var releases = await FetchAllPagesAsync<GameCenterAchievementReleasesResponse, GameCenterAchievementRelease>(
-                api.AsynchronousClient,
-                api.Configuration,
-                () => api.GameCenterDetailsAchievementReleasesGetToManyRelatedAsync(GameCenterDetailId, limit: 200),
-                r => r.Data,
-                r => r.Links?.Next,
-                Verbose
-            );
-
-            foreach (var release in releases)
-            {
-                var id = release.Relationships?.GameCenterAchievement?.Data?.Id;
-                if (!string.IsNullOrWhiteSpace(id))
-                    result.Add(id);
-            }
-
-            if (Verbose)
-                Console.WriteLine($"      {result.Count} achievement(s) are already released.");
-        }
-        catch (Exception ex)
-        {
-            // not fatal: without the list every achievement is simply attempted, and a duplicate
-            // release is answered with a 409 that is already handled
-            Console.WriteLine($"Warning: could not read the existing releases: {ex.Message}");
-        }
-
-        return result;
-    }
-
-    /// <summary>states of a review submission that is still open and can take another item</summary>
+    /// <summary>a review submission that can still take items</summary>
     private static readonly ReviewSubmissionAttributes.StateEnum[] OpenStates =
     {
         ReviewSubmissionAttributes.StateEnum.READYFORREVIEW,
