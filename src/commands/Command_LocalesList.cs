@@ -106,6 +106,17 @@ public class Command_LocalesList : AppMetadataCommandBase
                     if (!string.IsNullOrWhiteSpace(locale) && !locales.Contains(locale, StringComparer.OrdinalIgnoreCase))
                         locales.Add(locale);
                 }
+
+                // the product state says nothing about a language added to an approved product:
+                // that one carries its own state, and this is the only place it shows up
+                if (verbose)
+                {
+                    var states = (response?.Data ?? new())
+                        .GroupBy(l => l.Attributes?.State?.ToString() ?? "?")
+                        .Select(g => $"{g.Count()} {g.Key}");
+
+                    Console.WriteLine($"      {product.Attributes?.ProductId,-48} {product.Attributes?.State}: {string.Join(", ", states)}");
+                }
             }
             catch (Exception ex)
             {

@@ -33,7 +33,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
         Console.WriteLine("description:");
         CommandLinesUtils.PrintDescription(Description);
         CommandLinesUtils.PrintDescription("Without any of the three flags all three are done. With one or more, only those.");
-        CommandLinesUtils.PrintDescription("In-App Purchases: every product sitting in READY_TO_SUBMIT gets its own submission. A product already waiting for review, in review or approved is left alone, so running this twice is safe.");
+        CommandLinesUtils.PrintDescription("In-App Purchases: every product sitting in READY_TO_SUBMIT gets its own submission, and so does an approved product with a language still in 'Prepare for Submission'. A product already waiting for review or in review is left alone, so running this twice is safe.");
         CommandLinesUtils.PrintDescription("Achievements: a release is created for every achievement, which is what turns its localizations from 'Prepare for Submission' into 'Live'. An achievement whose languages have no image can not be released and is reported instead.");
         CommandLinesUtils.PrintDescription("App store version: the editable version is added to the open review submission, or to a new one, and that submission is then submitted.");
         CommandLinesUtils.PrintDescription("Run with -n first. This is the one command here that can not be undone by running it again.");
@@ -91,8 +91,21 @@ public class Command_LocalesSubmit : GameCenterCommandBase
         InAppPurchaseState.WAITINGFORREVIEW,
         InAppPurchaseState.INREVIEW,
         InAppPurchaseState.PENDINGBINARYAPPROVAL,
-        InAppPurchaseState.APPROVED,
     };
+
+    /// <summary>
+    /// An approved product stays APPROVED when a language is added to it: the new text carries its
+    /// own state instead, and the product is worth a submission exactly when some of it is still
+    /// 'Prepare for Submission'.
+    /// </summary>
+    private async Task<int> PendingLocalizationsAsync(InAppPurchaseV2 product)
+    {
+        var api = new InAppPurchasesApi(Service);
+        var response = await api.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(product.Id, limit: 200);
+
+        return (response?.Data ?? new())
+            .Count(l => l.Attributes?.State == InAppPurchaseLocalizationAttributes.StateEnum.PREPAREFORSUBMISSION);
+    }
 
     private async Task SubmitIapsAsync()
     {
@@ -128,6 +141,21 @@ public class Command_LocalesSubmit : GameCenterCommandBase
             if (state == InAppPurchaseState.READYTOSUBMIT)
             {
                 ready.Add(product);
+                continue;
+            }
+
+            if (state == InAppPurchaseState.APPROVED)
+            {
+                var pending = await PendingLocalizationsAsync(product);
+
+                if (pending > 0)
+                {
+                    Console.WriteLine($"      [TEXT] {product.Attributes?.ProductId} is approved, {pending} language(s) still to be submitted.");
+                    ready.Add(product);
+                }
+                else if (Verbose)
+                    Console.WriteLine($"      [SAME] {product.Attributes?.ProductId} is already {state}.");
+
                 continue;
             }
 

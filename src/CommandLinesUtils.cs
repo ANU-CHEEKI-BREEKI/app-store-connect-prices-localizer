@@ -244,10 +244,8 @@ public static class CommandLinesUtils
 
     public static string TryGetOption(this string[] args, string arg, string defaultValue)
     {
-        var pathIndex = args
-            .Select((a, i) => new { a, i })
-            .Where(a => a.a.StartsWith(arg))
-            .FirstOrDefault()?.i ?? -1;
+        // an exact match only: '--iap' must not pick up '--iaps' and eat the flag after it as its value
+        var pathIndex = Array.IndexOf(args, arg);
 
         if (pathIndex < 0 || pathIndex + 1 >= args.Length)
             return defaultValue;
