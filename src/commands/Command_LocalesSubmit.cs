@@ -26,7 +26,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("locales submit [--iaps] [--achievements] [--app] [--iap <id[,id...]>] [-n] [-v]");
+        Console.WriteLine("locales submit [--iaps] [--texts] [--achievements] [--app] [--iap <id[,id...]>] [-n] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -42,6 +42,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
         Console.WriteLine("options:");
 
         CommandLinesUtils.PrintOption("--iaps", "Submit the In-App Purchases only.");
+        CommandLinesUtils.PrintOption("--texts", "Also submit approved products that have a language still in 'Prepare for Submission'. The api does not report those languages as submitted afterwards, so run this once.");
         CommandLinesUtils.PrintOption("--achievements", "Release the Game Center achievements only.");
         CommandLinesUtils.PrintOption("--app", "Submit the app store version only.");
         CommandLinesUtils.PrintOption(CommandLinesUtils.IapOptionName, CommandLinesUtils.IapOptionDescription);
@@ -97,6 +98,10 @@ public class Command_LocalesSubmit : GameCenterCommandBase
     /// An approved product stays APPROVED when a language is added to it: the new text carries its
     /// own state instead, and the product is worth a submission exactly when some of it is still
     /// 'Prepare for Submission'.
+    ///
+    /// That state is not to be trusted after a submission though: the api keeps answering
+    /// PREPARE_FOR_SUBMISSION while the console already says 'Waiting for Review'. Which is why
+    /// this path is behind --texts, and running it twice is not safe.
     /// </summary>
     private async Task<int> PendingLocalizationsAsync(InAppPurchaseV2 product)
     {
@@ -109,6 +114,8 @@ public class Command_LocalesSubmit : GameCenterCommandBase
 
     private async Task SubmitIapsAsync()
     {
+        var texts = Args.HasFlag("--texts");
+
         Console.WriteLine();
         Console.WriteLine("   -> In-App Purchases...");
 
@@ -144,7 +151,7 @@ public class Command_LocalesSubmit : GameCenterCommandBase
                 continue;
             }
 
-            if (state == InAppPurchaseState.APPROVED)
+            if (state == InAppPurchaseState.APPROVED && texts)
             {
                 var pending = await PendingLocalizationsAsync(product);
 

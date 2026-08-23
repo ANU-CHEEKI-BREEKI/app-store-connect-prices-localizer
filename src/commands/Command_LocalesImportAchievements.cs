@@ -10,6 +10,9 @@ using AppStoreConnect.Net.Model;
 /// </summary>
 public class Command_LocalesImportAchievements : GameCenterCommandBase
 {
+    /// <summary>how many languages get their image at the same time; App Store Connect copes with this many</summary>
+    private const int ImageUploadParallelism = 8;
+
     /// <summary>"vendorId|locale|field" of every value validation rejected</summary>
     private readonly HashSet<string> _invalid = new(StringComparer.OrdinalIgnoreCase);
 
@@ -509,22 +512,40 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
                 continue;
             }
 
-            foreach (var target in targets)
+            // a copy is three slow round trips and the languages do not depend on each other,
+            // so a few of them go at once; the lists are shared, hence the lock
+            var bytes = downloaded.Value.Bytes;
+            var fileName = downloaded.Value.FileName;
+            var gate = new SemaphoreSlim(ImageUploadParallelism);
+
+            await Task.WhenAll(targets.Select(async target =>
             {
                 var locale = target.Attributes?.Locale;
+                await gate.WaitAsync();
 
                 try
                 {
-                    await CopyImageAsync(http, achievement, target, downloaded.Value.Bytes, downloaded.Value.FileName, Verbose);
-                    updated.Add($"{achievement.VendorIdentifier} [{locale}] image");
-                    copied++;
+                    await CopyImageAsync(http, achievement, target, bytes, fileName, Verbose);
+
+                    lock (updated)
+                    {
+                        updated.Add($"{achievement.VendorIdentifier} [{locale}] image");
+                        copied++;
+                    }
                 }
                 catch (Exception ex)
                 {
-                    PrintApiError($"failed to copy the image to {achievement.VendorIdentifier} [{locale}]", ex);
-                    failed.Add($"{achievement.VendorIdentifier} [{locale}] image");
+                    lock (failed)
+                    {
+                        PrintApiError($"failed to copy the image to {achievement.VendorIdentifier} [{locale}]", ex);
+                        failed.Add($"{achievement.VendorIdentifier} [{locale}] image");
+                    }
                 }
-            }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
         }
 
         Console.WriteLine(copied == 0

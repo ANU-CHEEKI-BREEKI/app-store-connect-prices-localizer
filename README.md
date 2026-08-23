@@ -695,6 +695,9 @@ together:
 
 - an **In-App Purchase** gets its own submission, independent of any app version. Only products
   sitting in `READY_TO_SUBMIT` are sent, so running this twice is safe
+- a language added to an **approved** product leaves the product `APPROVED`, so it is not sent unless you
+  pass `--texts`. The api keeps reporting that language as `PREPARE_FOR_SUBMISSION` after it was sent
+  (the console says 'Waiting for Review'), so run `--texts` once, not on every pass
 - an **achievement** is not reviewed but *released*, which is what turns its languages from
   `Prepare for Submission` into `Live`. Achievements that already have a release are skipped, and one
   whose languages have no image is reported instead of failing
@@ -734,7 +737,7 @@ Both imports also take `--submit`, which sends exactly what that run changed.
 - 
 
     locales sync achievement-images [--from <locale>] [--overwrite] [-n] [-v]
-    locales submit [--iaps] [--achievements] [--app] [--iap <id[,id...]>] [-n] [-v]
+    locales submit [--iaps] [--texts] [--achievements] [--app] [--iap <id[,id...]>] [-n] [-v]
 
 ---
 
