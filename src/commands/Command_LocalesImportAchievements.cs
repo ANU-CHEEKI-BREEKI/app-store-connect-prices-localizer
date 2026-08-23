@@ -22,7 +22,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("locales import achievements [--csv <path>] [--force] [--no-create] [--no-images] [--submit] [-n] [-v]");
+        Console.WriteLine("locales import achievements [--csv <path>] [--achievement <id[,id...]>] [--locales <code[,code...]>] [--force] [--no-create] [--no-images] [--submit] [-n] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -42,6 +42,8 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
             "--csv <path>",
             $"The table with translations. If not specified, the path from global config json ('AchievementTranslationsFilePath') is used. A directory is also accepted, then '{Command_LocalesExportAchievements.DefaultFileName}' is read from it."
         );
+        CommandLinesUtils.PrintOption("--achievement <id[,id...]>", "Import only these achievements, a comma separated list of vendor identifiers. Default is every achievement in the csv.");
+        CommandLinesUtils.PrintOption("--locales <code[,code...]>", "Import only these languages, a comma separated list of locale codes, e.g. 'uk,de-DE'. Default is every language the csv has a column for.");
         CommandLinesUtils.PrintOption("--force", "Run even though validation found problems: every value that would be rejected is skipped, everything else is sent.");
         CommandLinesUtils.PrintOption("--no-create", "Do not create localizations for locales an achievement does not have yet, skip them instead.");
         CommandLinesUtils.PrintOption("--no-images", "Do not copy the primary language's image onto the languages that have none.");
@@ -56,6 +58,8 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
         var force = Args.HasFlag("--force");
         var withImages = !Args.HasFlag("--no-images");
         var submit = Args.HasFlag("--submit");
+        var onlyAchievements = new HashSet<string>(ParseList("--achievement"), StringComparer.Ordinal);
+        var onlyLocales = new HashSet<string>(ParseList("--locales"), StringComparer.OrdinalIgnoreCase);
 
         _invalid.Clear();
 
@@ -89,6 +93,32 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
             if (achievements is null)
                 return;
 
+            // narrowed down here, before the images, so an achievement outside the filter is not
+            // touched at all - not even to give it an image
+            if (onlyAchievements.Count > 0)
+            {
+                achievements = achievements.Where(a => onlyAchievements.Contains(a.VendorIdentifier)).ToList();
+
+                foreach (var id in onlyAchievements.Except(achievements.Select(a => a.VendorIdentifier)))
+                    Console.WriteLine($"Warning: --achievement '{id}' matched no achievement.");
+
+                if (achievements.Count == 0)
+                {
+                    Console.WriteLine("   -> nothing to import, no achievement matched.");
+                    return;
+                }
+
+                Console.WriteLine($"   -> only {achievements.Count} achievement(s): {string.Join(", ", achievements.Select(a => a.VendorIdentifier))}");
+            }
+
+            if (onlyLocales.Count > 0)
+            {
+                foreach (var code in onlyLocales.Where(c => !csv.Locales.Contains(c, StringComparer.OrdinalIgnoreCase)))
+                    Console.WriteLine($"Warning: --locales '{code}' has no column in the csv.");
+
+                Console.WriteLine($"   -> only {onlyLocales.Count} language(s): {string.Join(", ", onlyLocales)}");
+            }
+
             var byVendorId = achievements
                 .Where(a => !string.IsNullOrWhiteSpace(a.VendorIdentifier))
                 .ToDictionary(a => a.VendorIdentifier, StringComparer.Ordinal);
@@ -98,7 +128,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
             var skipped = new List<string>();
             var failed = new List<string>();
 
-            var groups = ResolveGroups(csv, byVendorId, skipped);
+            var groups = ResolveGroups(csv, byVendorId, onlyAchievements, onlyLocales, skipped);
 
             if (!Validate(groups, force, skipped))
                 return;
@@ -143,13 +173,23 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
         public string VendorId => Achievement.VendorIdentifier;
     }
 
-    private List<AchievementValues> ResolveGroups(TranslationsCsv csv, Dictionary<string, Achievement> byVendorId, List<string> skipped)
+    private List<AchievementValues> ResolveGroups(
+        TranslationsCsv csv,
+        Dictionary<string, Achievement> byVendorId,
+        HashSet<string> onlyAchievements,
+        HashSet<string> onlyLocales,
+        List<string> skipped
+    )
     {
         var result = new List<AchievementValues>();
         var unknown = new List<string>();
 
         foreach (var group in csv.ById)
         {
+            // a row outside --achievement is not unknown, it is simply not asked for this run
+            if (onlyAchievements.Count > 0 && !onlyAchievements.Contains(group.Key))
+                continue;
+
             if (!byVendorId.TryGetValue(group.Key, out var achievement))
             {
                 unknown.Add(group.Key);
@@ -168,6 +208,9 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
 
                 foreach (var (sourceLocale, value) in row.Values)
                 {
+                    if (onlyLocales.Count > 0 && !onlyLocales.Contains(sourceLocale))
+                        continue;
+
                     if (!AppStoreLocales.TryResolve(sourceLocale, achievement.Locales, out var locale, out _))
                     {
                         var reason = $"{sourceLocale} (language the App Store does not support)";

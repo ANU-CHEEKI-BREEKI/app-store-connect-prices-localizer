@@ -636,6 +636,8 @@ reads back: prices, one language, one row per product.
   not come back looking edited on every round trip
 - a language that does not exist yet is created; `--no-create` skips them instead
 - both take `-n` / `--dry-run`; `locales import iaps` also takes `--iap pack_one,pack_two`
+- `locales import achievements` takes `--achievement <id,id>` (vendor identifiers) and `--locales uk,de-DE`
+  to send one achievement or one language out of a full table; everything else in the csv is left alone
 
 The whole table is checked **before the first write goes out**, and a single bad value stops the run
 with nothing sent:
