@@ -3,6 +3,10 @@ using AppStoreConnect.Net.Client;
 public abstract class CommandBase
 {
     public AppStoreConnectConfiguration Service { get; private set; } = null!;
+
+    /// <summary>the direct http client over the same token; endpoints are named by path at the call</summary>
+    protected AscHttp Http { get; private set; } = null!;
+
     public Config Config { get; private set; } = null!;
     public string[] Args { get; set; } = null!;
 
@@ -20,6 +24,9 @@ public abstract class CommandBase
         Args = args;
         Service = service!;
         Config = config;
+
+        if (service is not null)
+            Http = new AscHttp(service);
     }
 
     /// <summary>

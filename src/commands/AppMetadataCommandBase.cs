@@ -340,6 +340,14 @@ public abstract class AppMetadataCommandBase : CommandBase
             return;
         }
 
+        if (ex is AscApiException asc)
+        {
+            Console.WriteLine($"[API ERROR] {what}: {asc.Message}");
+            Console.WriteLine($"Status: {asc.StatusCode}");
+            Console.WriteLine($"Response Body: {asc.ResponseBody}");
+            return;
+        }
+
         Console.WriteLine($"[ERROR] {what}: {ex.Message}");
     }
 }
