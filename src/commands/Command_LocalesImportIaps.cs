@@ -19,7 +19,7 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("locales import iaps [--csv <path>] [--iap <id[,id...]>] [--force] [--no-create] [--submit] [-n] [-v]");
+        Console.WriteLine("locales import iaps [--csv <path>] [--iap <id[,id...]>] [--locales <code[,code...]>] [--force] [--no-create] [--submit] [-n] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -41,6 +41,10 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
         CommandLinesUtils.PrintOption(
             CommandLinesUtils.IapOptionName,
             CommandLinesUtils.IapOptionDescription
+        );
+        CommandLinesUtils.PrintOption(
+            "--locales <code[,code...]>",
+            "Import only these languages, a comma separated list of locale codes, e.g. 'uk,de-DE'. Default is every language the csv has a column for."
         );
         CommandLinesUtils.PrintOption(
             "--force",
@@ -69,6 +73,7 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
         var canCreate = !Args.HasFlag("--no-create");
         var force = Args.HasFlag("--force");
         var submit = Args.HasFlag("--submit");
+        var onlyLocales = new HashSet<string>(ParseList("--locales"), StringComparer.OrdinalIgnoreCase);
 
         _invalid.Clear();
 
@@ -114,7 +119,15 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
             var skipped = new List<string>();
             var failed = new List<string>();
 
-            var groups = ResolveGroups(csv, byId, skipped);
+            if (onlyLocales.Count > 0)
+            {
+                foreach (var code in onlyLocales.Where(c => !csv.Locales.Contains(c, StringComparer.OrdinalIgnoreCase)))
+                    Console.WriteLine($"Warning: --locales '{code}' has no column in the csv.");
+
+                Console.WriteLine($"   -> only {onlyLocales.Count} language(s): {string.Join(", ", onlyLocales)}");
+            }
+
+            var groups = ResolveGroups(csv, byId, onlyLocales, skipped);
 
             // everything is checked up front: a run that dies halfway leaves the catalog half
             // translated, which is worse than not having started it
@@ -164,7 +177,7 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
     /// Matches the csv rows onto the products, and maps the column locale codes onto the ones
     /// App Store Connect accepts, before a single request goes out.
     /// </summary>
-    private List<ProductValues> ResolveGroups(TranslationsCsv csv, Dictionary<string, IapTexts> byId, List<string> skipped)
+    private List<ProductValues> ResolveGroups(TranslationsCsv csv, Dictionary<string, IapTexts> byId, HashSet<string> onlyLocales, List<string> skipped)
     {
         var result = new List<ProductValues>();
         var unknown = new List<string>();
@@ -189,6 +202,9 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
 
                 foreach (var (sourceLocale, value) in row.Values)
                 {
+                    if (onlyLocales.Count > 0 && !onlyLocales.Contains(sourceLocale))
+                        continue;
+
                     if (!AppStoreLocales.TryResolve(sourceLocale, product.Locales, out var locale, out var note))
                     {
                         var reason = $"{sourceLocale} (language the App Store does not support)";
