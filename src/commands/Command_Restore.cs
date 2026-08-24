@@ -123,7 +123,7 @@ public class Command_Restore : CommandBase
         }
     }
 
-    private async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
+    public async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
     {
         Console.WriteLine($"   -> Prepare iap price for IAP: {(string?)iapSettings.Iap["attributes"]?["productId"]}.");
 

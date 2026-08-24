@@ -31,11 +31,63 @@ public class Command_Localize : CommandBase
             listCommand.Initialize(Auth, Config, Args);
 
             var pricesSetup = new List<IapPriceSetup>();
+            var failed = new List<string>();
 
-            foreach (var item in iaps)
-                await LocalizePrises(item!, listCommand, pricesSetup, localPercentages, baseTerritory, v);
+            var parallelism = ResolveParallelism(iaps.Count, v);
+            var gate = new SemaphoreSlim(parallelism);
 
-            await restorer.SetPrices(pricesSetup, v);
+            // products are independent, so a few of them go at once; how many is decided
+            // above from the quota the api reports. The lists are shared, hence the locks
+            await Task.WhenAll(iaps.Select(async item =>
+            {
+                await gate.WaitAsync();
+
+                try
+                {
+                    await LocalizePrises(item!, listCommand, pricesSetup, localPercentages, baseTerritory, v);
+                }
+                catch (Exception ex)
+                {
+                    lock (failed)
+                    {
+                        Console.WriteLine($"[FAILED] {(string?)item?["attributes"]?["productId"]}: {ex.Message}");
+                        failed.Add((string?)item?["attributes"]?["productId"] ?? "?");
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
+
+            await Task.WhenAll(pricesSetup.Select(async setup =>
+            {
+                await gate.WaitAsync();
+
+                try
+                {
+                    await restorer.SetPrices(setup, v);
+                }
+                catch (Exception ex)
+                {
+                    lock (failed)
+                    {
+                        Console.WriteLine($"[FAILED] {(string?)setup.Iap["attributes"]?["productId"]}: {ex.Message}");
+                        failed.Add((string?)setup.Iap["attributes"]?["productId"] ?? "?");
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
+
+            if (failed.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"[RETRY] {failed.Count} product(s) failed. Nothing was half-written: a product either got its whole new price schedule or kept the old one. Run again for just them:");
+                Console.WriteLine($"        dotnet run -- localize --iap {string.Join(",", failed.Distinct())}");
+            }
 
             // print what we set at the end
             await listCommand.ExecuteAsync();
@@ -158,12 +210,35 @@ public class Command_Localize : CommandBase
         }
     }
 
+    /// <summary>
+    /// How many products go at once. An explicit --parallel wins; otherwise the quota the api
+    /// reports decides: when what is left would not even cover this run, everything goes one by
+    /// one and lets the retry-on-429 pacing do its job.
+    /// </summary>
+    private int ResolveParallelism(int productCount, bool v)
+    {
+        var option = Args.TryGetOption("--parallel", "");
+
+        if (int.TryParse(option, out var parsed))
+            return Math.Clamp(parsed, 1, 8);
+
+        var estimate = productCount * 35;
+        var remaining = AscHttp.HourRemaining;
+
+        var chosen = remaining is { } rem && rem < estimate + 100 ? 1 : 4;
+
+        if (v)
+            Console.WriteLine($"Parallelism: {chosen} (quota remaining: {remaining?.ToString() ?? "unknown"}, this run needs ~{estimate}).");
+
+        return chosen;
+    }
+
     public override string Name => "localize";
     public override string Description => "Recalculates prices for all regions based on the default currency price provided in your JSON config and localized prices template.";
 
     public override void PrintHelp()
     {
-        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [-v] [-l]");
+        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -185,6 +260,10 @@ public class Command_Localize : CommandBase
         CommandLinesUtils.PrintOption(
             CommandLinesUtils.IapOptionName,
             CommandLinesUtils.IapOptionDescription
+        );
+        CommandLinesUtils.PrintOption(
+            "--parallel <n>",
+            "How many products to localize at once, 1 to 8. Without it the tool decides from the quota the api reports, normally 4."
         );
         CommandLinesUtils.PrintOption(
             "-v",
