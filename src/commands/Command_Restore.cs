@@ -11,6 +11,9 @@ public class IapPriceSetup
     public double BasePrice;
     public string BaseTerritoryCode;
     public PricePerTerritory LocalPrices = new();
+
+    /// <summary>points already resolved for a territory; SetPrices uses them without a search</summary>
+    public Dictionary<string, JsonNode> CandidatePoints = new(StringComparer.Ordinal);
 }
 
 public class PricePerTerritory : Dictionary<string, double> { }
@@ -128,7 +131,8 @@ public class Command_Restore : CommandBase
 
         Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
 
-        var basePoint = await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
+        var basePoint = iapSettings.CandidatePoints.GetValueOrDefault(iapSettings.BaseTerritoryCode)
+            ?? await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
         manualPrices.Add(
             CreatePriceEntry(basePoint!)
         );
@@ -144,7 +148,10 @@ public class Command_Restore : CommandBase
             var territoryCode = territory.Key;
             var targetPrice = territory.Value;
 
-            var localPoint = await GetClosestPricePointId(iapSettings.Iap, territoryCode, targetPrice, verbose);
+            // a candidate is a point the caller already holds in hand for this territory,
+            // so nothing needs to be searched for; the paged search is the fallback
+            var localPoint = iapSettings.CandidatePoints.GetValueOrDefault(territoryCode)
+                ?? await GetClosestPricePointId(iapSettings.Iap, territoryCode, targetPrice, verbose);
 
             if (localPoint != null)
             {
@@ -158,6 +165,33 @@ public class Command_Restore : CommandBase
         }
 
         await PushNewSchedule(iapSettings.Iap, iapSettings.BaseTerritoryCode, manualPrices, verbose);
+    }
+
+    /// <summary>
+    /// The same answer the paged search gives, from a grid already in hand: the point nearest to
+    /// the target by absolute difference, the higher one on a tie, exactly like the ascending
+    /// page walk did.
+    /// </summary>
+    public static JsonNode? FindClosestInGrid(IReadOnlyList<JsonNode> grid, double targetPrice)
+    {
+        JsonNode? best = null;
+        var bestDiff = double.MaxValue;
+
+        foreach (var point in grid)
+        {
+            if (!double.TryParse((string?)point["attributes"]?["customerPrice"], NumberStyles.Any, CultureInfo.InvariantCulture, out var price))
+                continue;
+
+            var diff = Math.Abs(price - targetPrice);
+
+            if (diff <= bestDiff)
+            {
+                best = point;
+                bestDiff = diff;
+            }
+        }
+
+        return best;
     }
 
     public async Task<JsonNode?> GetClosestPricePointId(JsonNode iap, string territory, double targetPrice, bool verbose)

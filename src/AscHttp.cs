@@ -100,8 +100,16 @@ public class AscHttp
         }
     }
 
+    /// <summary>requests sent by every instance since the process started; printed by commands that care</summary>
+    public static int RequestCount;
+
     private async Task<JsonNode> SendAsync(HttpMethod method, string path, JsonNode? body)
     {
+        Interlocked.Increment(ref RequestCount);
+
+        if (Environment.GetEnvironmentVariable("ASC_HTTP_LOG") == "1")
+            Console.WriteLine($"[http] {method} {path[..Math.Min(path.Length, 120)]}");
+
         using var request = new HttpRequestMessage(method, BaseUrl + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token());
 
