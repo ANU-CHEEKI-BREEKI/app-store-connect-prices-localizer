@@ -57,6 +57,30 @@ public abstract class CommandBase
         return kept;
     }
 
+
+    /// <summary>
+    /// How many products go at once. An explicit --parallel wins; otherwise the quota the api
+    /// reports decides: when what is left would not even cover this run, everything goes one by
+    /// one and lets the retry-on-429 pacing do its job.
+    /// </summary>
+    protected int ResolveParallelism(int productCount, bool verbose)
+    {
+        var option = Args.TryGetOption("--parallel", "");
+
+        if (int.TryParse(option, out var parsed))
+            return Math.Clamp(parsed, 1, 8);
+
+        var estimate = productCount * 35;
+        var remaining = AscHttp.HourRemaining;
+
+        var chosen = remaining is { } rem && rem < estimate + 100 ? 1 : 4;
+
+        if (verbose)
+            Console.WriteLine($"Parallelism: {chosen} (quota remaining: {remaining?.ToString() ?? "unknown"}, this run needs ~{estimate}).");
+
+        return chosen;
+    }
+
     public async Task ExecuteAsync()
         => await InternalExecuteAsync();
 

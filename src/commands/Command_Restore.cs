@@ -112,14 +112,38 @@ public class Command_Restore : CommandBase
     public async Task SetPrices(List<IapPriceSetup> iapPrices, bool verbose)
     {
         Console.WriteLine("   -> Settings IAP Prices...");
-        try
+
+        var failed = new List<string>();
+        var gate = new SemaphoreSlim(ResolveParallelism(iapPrices.Count, verbose));
+
+        // products are independent, so a few of them go at once, same as localize
+        await Task.WhenAll(iapPrices.Select(async iap =>
         {
-            foreach (var iap in iapPrices)
+            await gate.WaitAsync();
+
+            try
+            {
                 await SetPrices(iap, verbose);
-        }
-        catch (Exception ex)
+            }
+            catch (Exception ex)
+            {
+                lock (failed)
+                {
+                    Console.WriteLine($"[FAILED] {(string?)iap.Iap["attributes"]?["productId"]}: {ex.Message}");
+                    failed.Add((string?)iap.Iap["attributes"]?["productId"] ?? "?");
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }));
+
+        if (failed.Count > 0)
         {
-            Console.WriteLine(ex);
+            Console.WriteLine();
+            Console.WriteLine($"[RETRY] {failed.Count} product(s) failed. A product either got its whole price schedule or kept the old one. Run again for just them:");
+            Console.WriteLine($"        dotnet run -- restore --iap {string.Join(",", failed.Distinct())}");
         }
     }
 
