@@ -90,16 +90,24 @@ This will reset their prices to the default price (just like you can do manually
 
 ---
 
-### Annoying: the API is slow
+### The API is slow, the tool works around it
 
-For some reason [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi) has only REST api and they suck. 
-Its reaquired a LOT OF REQUEST to localize even single iap product.
-So you probably will run this program before going to bed, or before launch break.
+The [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi) is REST
+only, and what actually limits a price run is the
+[hourly request quota](https://developer.apple.com/documentation/appstoreconnectapi/identifying-rate-limits),
+not the latency. `localize` deals with both ends of that:
 
-Localizing 27 products took ~2 hours for me. 
+- **one request per multiplier instead of one per territory**: the pricing template only has a
+  handful of distinct percentages, so an anchor price point per percentage plus one
+  `equalizations` call hands back the matching point of every territory at once
+- **a few products at a time**: 4 by default, `--parallel 1..8` by hand. The auto choice reads the
+  `X-Rate-Limit` header the api sends back and drops to one-by-one when the remaining quota would
+  not cover the run
+- **retries**: a 429 waits out the `Retry-After`, a 5xx gets a growing pause, and a failed product
+  is named at the end in a ready-to-run `localize --iap` line - a product either gets its whole new
+  schedule or keeps the old one, so the rerun is safe
 
-Also [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi) has requests quota, so you cant spam your requests in multiple threads... 
-There are a away to [manage requests rate limits](https://developer.apple.com/documentation/appstoreconnectapi/identifying-rate-limits), but i didnt implemented this here.
+Localizing 27 products used to take ~2 hours; now a run like that fits in a few minutes.
 
 ---
 
@@ -144,7 +152,7 @@ profile, and finally `../config.json`.
 - 
 
 
-    localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [-v] [-l]
+    localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]
 
 
     description:
@@ -157,6 +165,10 @@ profile, and finally `../config.json`.
     --localized-template <path>  Specifies path to json with percentages for each region that needs to
                                 be localized. Default path is:
                                 ./configs/localized-prices-template.json
+    --iap <id[,id...]>           Run only for these In-App Purchases, a comma separated list of product
+                                ids. Default is every product.
+    --parallel <n>               How many products to localize at once, 1 to 8. Without it the tool
+                                decides from the quota the api reports, normally 4.
     -v                           Include additional verbose output
     -l                           Include local pricing for all regions
 
