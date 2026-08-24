@@ -125,11 +125,13 @@ public class Command_Restore : CommandBase
 
     public async Task SetPrices(IapPriceSetup iapSettings, bool verbose)
     {
-        Console.WriteLine($"   -> Prepare iap price for IAP: {(string?)iapSettings.Iap["attributes"]?["productId"]}.");
+        if (verbose)
+            Console.WriteLine($"   -> Prepare iap price for IAP: {(string?)iapSettings.Iap["attributes"]?["productId"]}.");
 
         var manualPrices = new List<JsonObject>();
 
-        Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
+        if (verbose)
+            Console.WriteLine($"   -> Prepare iap price for territory: {iapSettings.BaseTerritoryCode}.");
 
         var basePoint = iapSettings.CandidatePoints.GetValueOrDefault(iapSettings.BaseTerritoryCode)
             ?? await GetClosestPricePointId(iapSettings.Iap, iapSettings.BaseTerritoryCode, iapSettings.BasePrice, verbose);
@@ -143,7 +145,8 @@ public class Command_Restore : CommandBase
             if (territory.Key == iapSettings.BaseTerritoryCode)
                 continue;
 
-            Console.WriteLine($"   -> Prepare iap price for territory: {territory.Key}.");
+            if (verbose)
+                Console.WriteLine($"   -> Prepare iap price for territory: {territory.Key}.");
 
             var territoryCode = territory.Key;
             var targetPrice = territory.Value;
@@ -163,6 +166,8 @@ public class Command_Restore : CommandBase
                     Console.WriteLine($" -> Set {territoryCode} to CustomerPrice: {(string?)localPoint?["attributes"]?["customerPrice"]}");
             }
         }
+
+        Console.WriteLine($"      {(string?)iapSettings.Iap["attributes"]?["productId"],-52} {manualPrices.Count} territories prepared.");
 
         await PushNewSchedule(iapSettings.Iap, iapSettings.BaseTerritoryCode, manualPrices, verbose);
     }
@@ -345,7 +350,8 @@ public class Command_Restore : CommandBase
             ["included"] = new JsonArray(prices.Select(p => (JsonNode)p).ToArray()),
         };
 
-        Console.WriteLine($"Sending Create Schedule Request for {(string?)iap["attributes"]?["productId"]} ...");
+        if (verbose)
+            Console.WriteLine($"Sending Create Schedule Request for {(string?)iap["attributes"]?["productId"]} ...");
 
         try
         {

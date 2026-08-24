@@ -269,21 +269,29 @@ public abstract class LocalesCommandBase : CommandBase
         Console.WriteLine($"[ERROR] {what}: {ex.Message}");
     }
 
-    protected static void PrintSummary(List<string> updated, List<string> created, List<string> skipped, List<string> failed)
+    protected void PrintSummary(List<string> updated, List<string> created, List<string> skipped, List<string> failed)
     {
+        // a run over a whole catalog updates hundreds of keys; the count is the news, the full
+        // list is for -v. What went wrong is never cut short
+        var limit = Verbose ? int.MaxValue : 15;
+
         Console.WriteLine();
         Console.WriteLine("summary:");
 
-        Print("updated", updated);
-        Print("created", created);
-        Print("skipped", skipped);
-        Print("failed ", failed);
+        Print("updated", updated, limit);
+        Print("created", created, limit);
+        Print("skipped", skipped, limit);
+        Print("failed ", failed, int.MaxValue);
 
-        static void Print(string label, List<string> items)
+        static void Print(string label, List<string> items, int limit)
         {
             Console.WriteLine($"   {label}: {items.Count}");
-            foreach (var item in items)
+
+            foreach (var item in items.Take(limit))
                 Console.WriteLine($"      -> {item}");
+
+            if (items.Count > limit)
+                Console.WriteLine($"      ... and {items.Count - limit} more (run with -v to see them all)");
         }
     }
 }
