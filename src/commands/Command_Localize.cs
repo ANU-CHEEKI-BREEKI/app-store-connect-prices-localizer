@@ -14,10 +14,10 @@ public class Command_Localize : CommandBase
             var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, "../default-prices-usd.json", Args.HasFlag("-v")) ?? new();
             var localPercentages = await CommandLinesUtils.LoadJson<LocalizedPricesPercentagesConfigs>(Config.LocalizedPricesTemplateFilePath, "./configs/localized-prices-template.json", Args.HasFlag("-v")) ?? new();
 
-            // restore prices first
+            // no restore pre-step: the base price comes straight from the json config, so
+            // there is nothing to write before the one real write at the end
             var restorer = new Command_Restore();
             restorer.Initialize(Auth, Config, Args);
-            await restorer.ExecuteAsync();
 
             Console.WriteLine("   -> Localizing IAPs...");
             Console.WriteLine("   -> Receiving IAP list...");
@@ -25,10 +25,6 @@ public class Command_Localize : CommandBase
             var page = await Http.GetPagedAsync($"/v1/apps/{appId}/inAppPurchasesV2?limit=200");
 
             var iaps = FilterByIap(page.Data, p => (string?)p?["attributes"]?["productId"]);
-
-            // using to get local prices
-            var listCommand = new Command_List();
-            listCommand.Initialize(Auth, Config, Args);
 
             var pricesSetup = new List<IapPriceSetup>();
             var failed = new List<string>();
@@ -44,7 +40,7 @@ public class Command_Localize : CommandBase
 
                 try
                 {
-                    await LocalizePrises(item!, listCommand, pricesSetup, localPercentages, baseTerritory, v);
+                    await LocalizePrises(item!, basePrices, pricesSetup, localPercentages, baseTerritory, v);
                 }
                 catch (Exception ex)
                 {
@@ -90,6 +86,8 @@ public class Command_Localize : CommandBase
             }
 
             // print what we set at the end
+            var listCommand = new Command_List();
+            listCommand.Initialize(Auth, Config, Args);
             await listCommand.ExecuteAsync();
 
             Console.WriteLine($"   -> {AscHttp.RequestCount} request(s) to App Store Connect this run.");
@@ -100,89 +98,48 @@ public class Command_Localize : CommandBase
         }
     }
 
-    private async Task LocalizePrises(JsonNode iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, string baseTerritory, bool v)
+    private async Task LocalizePrises(JsonNode iap, ProductConfigs basePrices, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, string baseTerritory, bool v)
     {
-        var basePice = await listCommand.GetBasePrice(iap);
+        var productId = (string?)iap["attributes"]?["productId"] ?? "";
 
-        if (basePice is null)
+        if (!basePrices.TryGetValue(productId, out var configuredPrice))
         {
-            // nothing to anchor the whole calculation to; localizing blind would set garbage
-            Console.WriteLine($"[SKIP] {(string?)iap["attributes"]?["productId"]}: no base price in the store, nothing to localize from.");
+            Console.WriteLine($"[SKIP] {productId}: not in the default prices json, nothing to localize from.");
             return;
         }
 
-        var prices = await listCommand.GetAllLocalPricesAsync(iap);
+        // the marketing tweak restore always applied: 5.00 becomes 4.99
+        if (configuredPrice == Math.Truncate(configuredPrice))
+            configuredPrice -= 0.01m;
 
-        var priceSetup = new IapPriceSetup()
-        {
-            Iap = iap,
-            BasePrice = double.Parse((string)basePice.PricePoint["attributes"]!["customerPrice"]!, CultureInfo.InvariantCulture),
-            BaseTerritoryCode = basePice.TerritoryCode,
-            LocalPrices = new()
-        };
-        pricesSetup.Add(priceSetup);
-
-        Console.WriteLine($"   -> Localizing iap: {(string?)iap["attributes"]?["productId"]}.");
-
-        foreach (var pr in prices)
-        {
-            var multiplier = localPercentages.TryGetValue(pr.Value.TerritoryCode, out var percentage) ? percentage : 1m;
-
-            var newPrice = decimal.Parse(
-                (string)pr.Value.PricePoint["attributes"]!["customerPrice"]!, CultureInfo.InvariantCulture
-            ) * multiplier;
-
-            // make more like marketing price 5.00 -> 4.99 and hope it will be rounded as price point 4.99
-            if (Math.Truncate(newPrice) == newPrice)
-                newPrice -= 0.01m;
-
-            priceSetup.LocalPrices[pr.Value.TerritoryCode] = (double)newPrice;
-
-            if (v)
-                Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {(string?)pr.Value.PricePoint["attributes"]?["customerPrice"],10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
-        }
-
-        // the targets above are what the anchors resolve against, so this comes last
-        await ResolveCandidatePointsAsync(iap, priceSetup, localPercentages, baseTerritory, v);
-    }
-
-    /// <summary>
-    /// Resolves the exact price point of almost every territory without searching its grid.
-    ///
-    /// The trick: the template has only a handful of distinct multipliers. For each one the base
-    /// territory's grid (fetched once) gives an anchor point priced at base*multiplier, and one
-    /// 'equalizations' call on that anchor hands back Apple's matching point in every territory at
-    /// once. A request per multiplier instead of a request per territory - it is the request count
-    /// that runs into the api quota, not the latency.
-    /// </summary>
-    private async Task ResolveCandidatePointsAsync(JsonNode iap, IapPriceSetup priceSetup, LocalizedPricesPercentagesConfigs localPercentages, string baseTerritory, bool v)
-    {
-        // the base territory's full grid: the only grid this command ever pages through
+        // the base territory's grid, the only grid this command ever pages through
         var gridPage = await Http.GetPagedAsync(
             $"/v2/inAppPurchases/{(string?)iap["id"]}/pricePoints?filter[territory]={baseTerritory}&limit=200"
         );
-        var grid = gridPage.Data.Where(p => p is not null).Select(p => p!).ToList();
+        var grid = gridPage.Data.Where(g => g is not null).Select(g => g!).ToList();
 
-        if (grid.Count == 0)
+        var baseAnchor = Command_Restore.FindClosestInGrid(grid, (double)configuredPrice);
+
+        if (baseAnchor is null)
+        {
+            Console.WriteLine($"[SKIP] {productId}: no price point near {configuredPrice} in {baseTerritory}.");
             return;
+        }
 
-        var multipliers = priceSetup.LocalPrices.Keys
-            .Select(t => localPercentages.TryGetValue(t, out var m) ? m : 1m)
-            .Distinct()
-            .ToList();
+        Console.WriteLine($"   -> Localizing iap: {productId}.");
 
-        if (v)
-            Console.WriteLine($"Resolving anchors for {multipliers.Count} multiplier(s) over the {baseTerritory} grid of {grid.Count} point(s)...");
-
+        // one equalizations call per distinct multiplier: apple answers with its matching
+        // point of every territory at once, already in that territory's own currency
+        var multipliers = localPercentages.Values.Append(1m).Distinct().ToList();
         var byMultiplier = new Dictionary<decimal, Dictionary<string, JsonNode>>();
 
         foreach (var multiplier in multipliers)
         {
-            var target = (decimal)priceSetup.BasePrice * multiplier;
-            if (Math.Truncate(target) == target)
+            var target = configuredPrice * multiplier;
+            if (target == Math.Truncate(target))
                 target -= 0.01m;
 
-            var anchor = Command_Restore.FindClosestInGrid(grid, (double)target);
+            var anchor = multiplier == 1m ? baseAnchor : Command_Restore.FindClosestInGrid(grid, (double)target);
             if (anchor is null)
                 continue;
 
@@ -208,37 +165,32 @@ public class Command_Localize : CommandBase
                 Console.WriteLine($"Anchor x{multiplier}: {(string?)anchor["attributes"]?["customerPrice"]} {baseTerritory}, equalized into {perTerritory.Count} territories.");
         }
 
-        foreach (var territory in priceSetup.LocalPrices.Keys)
+        var priceSetup = new IapPriceSetup()
         {
-            var multiplier = localPercentages.TryGetValue(territory, out var m) ? m : 1m;
+            Iap = iap,
+            BasePrice = (double)configuredPrice,
+            BaseTerritoryCode = baseTerritory,
+            LocalPrices = new()
+        };
 
-            if (byMultiplier.TryGetValue(multiplier, out var perTerritory)
-                && perTerritory.TryGetValue(territory, out var point))
-                priceSetup.CandidatePoints[territory] = point;
+        // every territory the base equalizes into gets the point of its own multiplier
+        foreach (var (territory, basePoint) in byMultiplier[1m])
+        {
+            var multiplier = localPercentages.TryGetValue(territory, out var percentage) ? percentage : 1m;
+
+            if (!byMultiplier.TryGetValue(multiplier, out var perTerritory)
+                || !perTerritory.TryGetValue(territory, out var point))
+                continue;
+
+            priceSetup.CandidatePoints[territory] = point;
+            priceSetup.LocalPrices[territory] = double.Parse((string)point["attributes"]!["customerPrice"]!, CultureInfo.InvariantCulture);
+
+            if (v)
+                Console.WriteLine($"Calculating price for {territory}: {(string?)basePoint["attributes"]?["customerPrice"],10} * {multiplier,3} = {priceSetup.LocalPrices[territory],10:##.00}");
         }
-    }
 
-    /// <summary>
-    /// How many products go at once. An explicit --parallel wins; otherwise the quota the api
-    /// reports decides: when what is left would not even cover this run, everything goes one by
-    /// one and lets the retry-on-429 pacing do its job.
-    /// </summary>
-    private int ResolveParallelism(int productCount, bool v)
-    {
-        var option = Args.TryGetOption("--parallel", "");
-
-        if (int.TryParse(option, out var parsed))
-            return Math.Clamp(parsed, 1, 8);
-
-        var estimate = productCount * 35;
-        var remaining = AscHttp.HourRemaining;
-
-        var chosen = remaining is { } rem && rem < estimate + 100 ? 1 : 4;
-
-        if (v)
-            Console.WriteLine($"Parallelism: {chosen} (quota remaining: {remaining?.ToString() ?? "unknown"}, this run needs ~{estimate}).");
-
-        return chosen;
+        lock (pricesSetup)
+            pricesSetup.Add(priceSetup);
     }
 
     public override string Name => "localize";
