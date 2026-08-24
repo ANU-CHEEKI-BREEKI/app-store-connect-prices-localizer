@@ -31,14 +31,68 @@ public class Command_Localize : CommandBase
             listCommand.Initialize(Auth, Config, Args);
 
             var pricesSetup = new List<IapPriceSetup>();
+            var failed = new List<string>();
 
-            foreach (var item in iaps)
-                await LocalizePrises(item!, listCommand, pricesSetup, localPercentages, v);
+            var parallelism = ResolveParallelism(iaps.Count, v);
+            var gate = new SemaphoreSlim(parallelism);
 
-            await restorer.SetPrices(pricesSetup, v);
+            // products are independent, so a few of them go at once; how many is decided
+            // above from the quota the api reports. The lists are shared, hence the locks
+            await Task.WhenAll(iaps.Select(async item =>
+            {
+                await gate.WaitAsync();
+
+                try
+                {
+                    await LocalizePrises(item!, listCommand, pricesSetup, localPercentages, baseTerritory, v);
+                }
+                catch (Exception ex)
+                {
+                    lock (failed)
+                    {
+                        Console.WriteLine($"[FAILED] {(string?)item?["attributes"]?["productId"]}: {ex.Message}");
+                        failed.Add((string?)item?["attributes"]?["productId"] ?? "?");
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
+
+            await Task.WhenAll(pricesSetup.Select(async setup =>
+            {
+                await gate.WaitAsync();
+
+                try
+                {
+                    await restorer.SetPrices(setup, v);
+                }
+                catch (Exception ex)
+                {
+                    lock (failed)
+                    {
+                        Console.WriteLine($"[FAILED] {(string?)setup.Iap["attributes"]?["productId"]}: {ex.Message}");
+                        failed.Add((string?)setup.Iap["attributes"]?["productId"] ?? "?");
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
+
+            if (failed.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"[RETRY] {failed.Count} product(s) failed. Nothing was half-written: a product either got its whole new price schedule or kept the old one. Run again for just them:");
+                Console.WriteLine($"        dotnet run -- localize --iap {string.Join(",", failed.Distinct())}");
+            }
 
             // print what we set at the end
             await listCommand.ExecuteAsync();
+
+            Console.WriteLine($"   -> {AscHttp.RequestCount} request(s) to App Store Connect this run.");
         }
         catch (Exception ex)
         {
@@ -46,7 +100,7 @@ public class Command_Localize : CommandBase
         }
     }
 
-    private async Task LocalizePrises(JsonNode iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, bool v)
+    private async Task LocalizePrises(JsonNode iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, string baseTerritory, bool v)
     {
         var basePice = await listCommand.GetBasePrice(iap);
         var prices = await listCommand.GetAllLocalPricesAsync(iap);
@@ -79,6 +133,104 @@ public class Command_Localize : CommandBase
             if (v)
                 Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {(string?)pr.Value.PricePoint["attributes"]?["customerPrice"],10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
         }
+
+        // the targets above are what the anchors resolve against, so this comes last
+        await ResolveCandidatePointsAsync(iap, priceSetup, localPercentages, baseTerritory, v);
+    }
+
+    /// <summary>
+    /// Resolves the exact price point of almost every territory without searching its grid.
+    ///
+    /// The trick: the template has only a handful of distinct multipliers. For each one the base
+    /// territory's grid (fetched once) gives an anchor point priced at base*multiplier, and one
+    /// 'equalizations' call on that anchor hands back Apple's matching point in every territory at
+    /// once. A request per multiplier instead of a request per territory - it is the request count
+    /// that runs into the api quota, not the latency.
+    /// </summary>
+    private async Task ResolveCandidatePointsAsync(JsonNode iap, IapPriceSetup priceSetup, LocalizedPricesPercentagesConfigs localPercentages, string baseTerritory, bool v)
+    {
+        // the base territory's full grid: the only grid this command ever pages through
+        var gridPage = await Http.GetPagedAsync(
+            $"/v2/inAppPurchases/{(string?)iap["id"]}/pricePoints?filter[territory]={baseTerritory}&limit=200"
+        );
+        var grid = gridPage.Data.Where(p => p is not null).Select(p => p!).ToList();
+
+        if (grid.Count == 0)
+            return;
+
+        var multipliers = priceSetup.LocalPrices.Keys
+            .Select(t => localPercentages.TryGetValue(t, out var m) ? m : 1m)
+            .Distinct()
+            .ToList();
+
+        if (v)
+            Console.WriteLine($"Resolving anchors for {multipliers.Count} multiplier(s) over the {baseTerritory} grid of {grid.Count} point(s)...");
+
+        var byMultiplier = new Dictionary<decimal, Dictionary<string, JsonNode>>();
+
+        foreach (var multiplier in multipliers)
+        {
+            var target = (decimal)priceSetup.BasePrice * multiplier;
+            if (Math.Truncate(target) == target)
+                target -= 0.01m;
+
+            var anchor = Command_Restore.FindClosestInGrid(grid, (double)target);
+            if (anchor is null)
+                continue;
+
+            var perTerritory = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+
+            var equalizations = await Http.GetPagedAsync(
+                $"/v1/inAppPurchasePricePoints/{Uri.EscapeDataString((string)anchor["id"]!)}/equalizations?include=territory&limit=200"
+            );
+
+            foreach (var point in equalizations.Data)
+            {
+                var territoryId = (string?)point?["relationships"]?["territory"]?["data"]?["id"];
+                if (territoryId is not null)
+                    perTerritory[territoryId] = point!;
+            }
+
+            // the anchor itself is the base territory's answer; equalizations do not echo it back
+            perTerritory[baseTerritory] = anchor;
+
+            byMultiplier[multiplier] = perTerritory;
+
+            if (v)
+                Console.WriteLine($"Anchor x{multiplier}: {(string?)anchor["attributes"]?["customerPrice"]} {baseTerritory}, equalized into {perTerritory.Count} territories.");
+        }
+
+        foreach (var territory in priceSetup.LocalPrices.Keys)
+        {
+            var multiplier = localPercentages.TryGetValue(territory, out var m) ? m : 1m;
+
+            if (byMultiplier.TryGetValue(multiplier, out var perTerritory)
+                && perTerritory.TryGetValue(territory, out var point))
+                priceSetup.CandidatePoints[territory] = point;
+        }
+    }
+
+    /// <summary>
+    /// How many products go at once. An explicit --parallel wins; otherwise the quota the api
+    /// reports decides: when what is left would not even cover this run, everything goes one by
+    /// one and lets the retry-on-429 pacing do its job.
+    /// </summary>
+    private int ResolveParallelism(int productCount, bool v)
+    {
+        var option = Args.TryGetOption("--parallel", "");
+
+        if (int.TryParse(option, out var parsed))
+            return Math.Clamp(parsed, 1, 8);
+
+        var estimate = productCount * 35;
+        var remaining = AscHttp.HourRemaining;
+
+        var chosen = remaining is { } rem && rem < estimate + 100 ? 1 : 4;
+
+        if (v)
+            Console.WriteLine($"Parallelism: {chosen} (quota remaining: {remaining?.ToString() ?? "unknown"}, this run needs ~{estimate}).");
+
+        return chosen;
     }
 
     public override string Name => "localize";
@@ -86,7 +238,7 @@ public class Command_Localize : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [-v] [-l]");
+        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -108,6 +260,10 @@ public class Command_Localize : CommandBase
         CommandLinesUtils.PrintOption(
             CommandLinesUtils.IapOptionName,
             CommandLinesUtils.IapOptionDescription
+        );
+        CommandLinesUtils.PrintOption(
+            "--parallel <n>",
+            "How many products to localize at once, 1 to 8. Without it the tool decides from the quota the api reports, normally 4."
         );
         CommandLinesUtils.PrintOption(
             "-v",

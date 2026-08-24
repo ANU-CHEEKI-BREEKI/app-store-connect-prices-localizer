@@ -11,6 +11,9 @@ public class AscApiException : Exception
     public int StatusCode { get; }
     public string ResponseBody { get; }
 
+    /// <summary>how long the server asked to wait before trying again, when it did</summary>
+    public TimeSpan? RetryAfter { get; init; }
+
     public AscApiException(int statusCode, string message, string responseBody)
         : base(message)
     {
@@ -100,8 +103,47 @@ public class AscHttp
         }
     }
 
+    /// <summary>requests sent by every instance since the process started; printed by commands that care</summary>
+    public static int RequestCount;
+
+    /// <summary>
+    /// requests left in the current hour, straight from the X-Rate-Limit header of the last
+    /// response. Null until the first response. The quota is per key, so one number for all
+    /// instances is the truth
+    /// </summary>
+    public static int? HourRemaining { get; private set; }
+
+    /// <summary>statuses worth a second try: the quota and the server having a moment</summary>
+    private static bool IsRetryable(int status, HttpMethod method)
+        => status == 429 || (status >= 500 && method != HttpMethod.Post);
+
     private async Task<JsonNode> SendAsync(HttpMethod method, string path, JsonNode? body)
     {
+        // a 429 means the hourly quota ran out: waiting is the only cure, and the header
+        // says how long. 5xx just gets a growing pause. POSTs are not retried on 5xx -
+        // the server may have executed them, and a duplicate write is worse than a loud error
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await SendOnceAsync(method, path, body);
+            }
+            catch (AscApiException ex) when (attempt <= 3 && IsRetryable(ex.StatusCode, method))
+            {
+                var delay = ex.RetryAfter ?? TimeSpan.FromSeconds(Math.Pow(2, attempt) * 5);
+                Console.WriteLine($"      [RETRY] {(int)ex.StatusCode} from the api, attempt {attempt} of 3, waiting {delay.TotalSeconds:0}s...");
+                await Task.Delay(delay);
+            }
+        }
+    }
+
+    private async Task<JsonNode> SendOnceAsync(HttpMethod method, string path, JsonNode? body)
+    {
+        Interlocked.Increment(ref RequestCount);
+
+        if (Environment.GetEnvironmentVariable("ASC_HTTP_LOG") == "1")
+            Console.WriteLine($"[http] {method} {path[..Math.Min(path.Length, 120)]}");
+
         using var request = new HttpRequestMessage(method, BaseUrl + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token());
 
@@ -111,8 +153,22 @@ public class AscHttp
         using var response = await Client.SendAsync(request);
         var text = await response.Content.ReadAsStringAsync();
 
+        // "user-hour-lim:3600;user-hour-rem:3128;" - the api tells how much quota is left
+        if (response.Headers.TryGetValues("X-Rate-Limit", out var rateValues))
+        {
+            var rem = rateValues
+                .SelectMany(v => v.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .FirstOrDefault(part => part.StartsWith("user-hour-rem:"));
+
+            if (rem is not null && int.TryParse(rem["user-hour-rem:".Length..], out var remaining))
+                HourRemaining = remaining;
+        }
+
         if (!response.IsSuccessStatusCode)
-            throw new AscApiException((int)response.StatusCode, $"{method} {path}: {text}", text);
+            throw new AscApiException((int)response.StatusCode, $"{method} {path}: {text}", text)
+            {
+                RetryAfter = response.Headers.RetryAfter?.Delta,
+            };
 
         return string.IsNullOrWhiteSpace(text)
             ? new JsonObject()
