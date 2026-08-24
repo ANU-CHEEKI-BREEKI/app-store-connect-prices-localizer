@@ -7,7 +7,6 @@ public class Config
     public string PrivateKeyFilePath { get; set; } = "";
 
     public string AppId { get; set; } = "";
-    public string DefaultPricesFilePath { get; set; } = "";
     public string LocalizedPricesTemplateFilePath { get; set; } = "";
 
     /// <summary>

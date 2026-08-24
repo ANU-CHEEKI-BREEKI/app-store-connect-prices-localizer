@@ -98,7 +98,6 @@ if (string.IsNullOrEmpty(configDirectory))
 
 config.ConfigDirectory = configDirectory;
 config.PrivateKeyFilePath = Path.Combine(configDirectory, config.PrivateKeyFilePath);
-config.DefaultPricesFilePath = Path.Combine(configDirectory, config.DefaultPricesFilePath);
 config.LocalizedPricesTemplateFilePath = Path.Combine(configDirectory, config.LocalizedPricesTemplateFilePath);
 config.ProductDefinitionsFilePath = Path.Combine(configDirectory, config.ProductDefinitionsFilePath);
 config.AchievementTranslationsFilePath = Path.Combine(configDirectory, config.AchievementTranslationsFilePath);
@@ -112,8 +111,6 @@ if (!string.IsNullOrWhiteSpace(config.AppMetadataFilePath))
 // patch config with explicit command line options
 config.AppId = args.TryGetOption("--app-id", config.AppId);
 config.PrivateKeyFilePath = args.TryGetOption("--private-key", config.PrivateKeyFilePath);
-config.DefaultPricesFilePath = args.TryGetOption("--prices", config.DefaultPricesFilePath);
-
 config.LocalizedPricesTemplateFilePath = args.TryGetOption("--localized-template", config.LocalizedPricesTemplateFilePath);
 config.ProductDefinitionsFilePath = args.TryGetOption("--products", config.ProductDefinitionsFilePath);
 config.AppMetadataFilePath = args.TryGetOption("--metadata", config.AppMetadataFilePath);
