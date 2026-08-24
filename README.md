@@ -90,16 +90,7 @@ This will reset their prices to the default price (just like you can do manually
 
 ---
 
-### The pain in the ass
-
-#### there is none any more
-
-The tool talks to the App Store Connect API directly: it signs its own JWT and sends plain
-HTTPS requests (see `src/AscAuth.cs` and `src/AscHttp.cs`). No generated client, no sibling
-repositories, nothing to build first. Clone, fill in `config.json`, run.
-
-
-#### annoing
+### Annoying: the API is slow
 
 For some reason [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi) has only REST api and they suck. 
 Its reaquired a LOT OF REQUEST to localize even single iap product.
