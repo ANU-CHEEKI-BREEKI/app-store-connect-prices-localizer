@@ -103,6 +103,14 @@ public class Command_Localize : CommandBase
     private async Task LocalizePrises(JsonNode iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, string baseTerritory, bool v)
     {
         var basePice = await listCommand.GetBasePrice(iap);
+
+        if (basePice is null)
+        {
+            // nothing to anchor the whole calculation to; localizing blind would set garbage
+            Console.WriteLine($"[SKIP] {(string?)iap["attributes"]?["productId"]}: no base price in the store, nothing to localize from.");
+            return;
+        }
+
         var prices = await listCommand.GetAllLocalPricesAsync(iap);
 
         var priceSetup = new IapPriceSetup()

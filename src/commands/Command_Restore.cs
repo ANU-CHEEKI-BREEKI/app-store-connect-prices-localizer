@@ -7,9 +7,9 @@ public class IapPriceSetup
     /// whole class here to not be confused what is iap id, product id, product name, etc
     /// Iap is the 'data' element of an In-App Purchase from the App Store Connect api
     /// </summary>
-    public JsonNode Iap;
+    public required JsonNode Iap;
     public double BasePrice;
-    public string BaseTerritoryCode;
+    public required string BaseTerritoryCode;
     public PricePerTerritory LocalPrices = new();
 
     /// <summary>points already resolved for a territory; SetPrices uses them without a search</summary>

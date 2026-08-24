@@ -87,7 +87,14 @@ if (config is null)
 
 // patch paths to be relative to config file
 var absoluteConfigPath = Path.GetFullPath(resolvedPathGetter.ResolvedPath);
+// null only when the config path is a filesystem root, which is never a real config file
 var configDirectory = Path.GetDirectoryName(absoluteConfigPath);
+
+if (string.IsNullOrEmpty(configDirectory))
+{
+    Console.WriteLine($"[ERROR] the config path '{absoluteConfigPath}' does not point to a file inside a directory.");
+    return;
+}
 
 config.ConfigDirectory = configDirectory;
 config.PrivateKeyFilePath = Path.Combine(configDirectory, config.PrivateKeyFilePath);

@@ -49,7 +49,7 @@ public class Command_List : CommandBase
             {
                 var price = pricePoints[iap!];
 
-                stringPairs.Add(new StringPairs { A = (string?)iap?["attributes"]?["productId"], B = $"{(string?)price?.PricePoint?["attributes"]?["customerPrice"]} {price?.Currency}" });
+                stringPairs.Add(new StringPairs { A = (string?)iap?["attributes"]?["productId"] ?? "?", B = $"{(string?)price?.PricePoint?["attributes"]?["customerPrice"]} {price?.Currency}" });
                 // Console.WriteLine($"{price?.TerritoryCode,5} {(string?)price?.PricePoint?["attributes"]?["customerPrice"],10} {price?.Currency,5} {(string?)iap?["attributes"]?["productId"],5}");
 
                 if (printLocalPrices)
@@ -78,8 +78,8 @@ public class Command_List : CommandBase
 
     private class StringPairs
     {
-        public string A;
-        public string B;
+        public required string A;
+        public required string B;
     }
 
     public override string Name => "list";
@@ -116,10 +116,10 @@ public class Command_List : CommandBase
 
     public class InAppPriceData
     {
-        public JsonNode Iap { get; set; }
-        public JsonNode PricePoint { get; set; }
-        public string TerritoryCode { get; set; }
-        public string Currency { get; set; }
+        public required JsonNode Iap { get; set; }
+        public required JsonNode PricePoint { get; set; }
+        public required string TerritoryCode { get; set; }
+        public required string Currency { get; set; }
     }
 
     public async Task<Dictionary<string, InAppPriceData>> GetAllLocalPricesAsync(JsonNode iap)
