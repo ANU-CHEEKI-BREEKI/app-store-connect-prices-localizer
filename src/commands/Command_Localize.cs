@@ -1,6 +1,5 @@
 using System.Globalization;
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 public class Command_Localize : CommandBase
 {
@@ -17,29 +16,28 @@ public class Command_Localize : CommandBase
 
             // restore prices first
             var restorer = new Command_Restore();
-            restorer.Initialize(Service, Config, Args);
+            restorer.Initialize(Auth, Config, Args);
             await restorer.ExecuteAsync();
 
             Console.WriteLine("   -> Localizing IAPs...");
             Console.WriteLine("   -> Receiving IAP list...");
 
-            var appApi = new AppsApi(Service);
-            var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(appId);
+            var page = await Http.GetPagedAsync($"/v1/apps/{appId}/inAppPurchasesV2?limit=200");
 
-            iaps.Data = FilterByIap(iaps.Data, p => p.Attributes?.ProductId);
+            var iaps = FilterByIap(page.Data, p => (string?)p?["attributes"]?["productId"]);
 
             // using to get local prices
             var listCommand = new Command_List();
-            listCommand.Initialize(Service, Config, Args);
+            listCommand.Initialize(Auth, Config, Args);
 
             var pricesSetup = new List<IapPriceSetup>();
 
-            foreach (var item in iaps.Data)
-                await LocalizePrises(item, listCommand, pricesSetup, localPercentages, v);
+            foreach (var item in iaps)
+                await LocalizePrises(item!, listCommand, pricesSetup, localPercentages, v);
 
             await restorer.SetPrices(pricesSetup, v);
 
-            // print what we set at the end        
+            // print what we set at the end
             await listCommand.ExecuteAsync();
         }
         catch (Exception ex)
@@ -48,7 +46,7 @@ public class Command_Localize : CommandBase
         }
     }
 
-    private async Task LocalizePrises(InAppPurchaseV2 iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, bool v)
+    private async Task LocalizePrises(JsonNode iap, Command_List listCommand, List<IapPriceSetup> pricesSetup, LocalizedPricesPercentagesConfigs localPercentages, bool v)
     {
         var basePice = await listCommand.GetBasePrice(iap);
         var prices = await listCommand.GetAllLocalPricesAsync(iap);
@@ -56,20 +54,20 @@ public class Command_Localize : CommandBase
         var priceSetup = new IapPriceSetup()
         {
             Iap = iap,
-            BasePrice = double.Parse(basePice.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture),
+            BasePrice = double.Parse((string)basePice.PricePoint["attributes"]!["customerPrice"]!, CultureInfo.InvariantCulture),
             BaseTerritoryCode = basePice.TerritoryCode,
             LocalPrices = new()
         };
         pricesSetup.Add(priceSetup);
 
-        Console.WriteLine($"   -> Localizing iap: {iap.Attributes.ProductId}.");
+        Console.WriteLine($"   -> Localizing iap: {(string?)iap["attributes"]?["productId"]}.");
 
         foreach (var pr in prices)
         {
             var multiplier = localPercentages.TryGetValue(pr.Value.TerritoryCode, out var percentage) ? percentage : 1m;
 
             var newPrice = decimal.Parse(
-                pr.Value.PricePoint.Attributes.CustomerPrice, CultureInfo.InvariantCulture
+                (string)pr.Value.PricePoint["attributes"]!["customerPrice"]!, CultureInfo.InvariantCulture
             ) * multiplier;
 
             // make more like marketing price 5.00 -> 4.99 and hope it will be rounded as price point 4.99
@@ -79,7 +77,7 @@ public class Command_Localize : CommandBase
             priceSetup.LocalPrices[pr.Value.TerritoryCode] = (double)newPrice;
 
             if (v)
-                Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {pr.Value.PricePoint.Attributes.CustomerPrice,10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
+                Console.WriteLine($"Calculating price for {pr.Value.TerritoryCode}: {(string?)pr.Value.PricePoint["attributes"]?["customerPrice"],10} * {multiplier,3} - 0.01 = {newPrice,10:##.00}");
         }
     }
 
@@ -126,23 +124,22 @@ public class Command_Localize : CommandBase
     //TODO: move to separate command Command_ListTerritories
     public async Task<List<StoreTerritory>> GetAllTerritoriesAsync()
     {
-        var territoriesApi = new TerritoriesApi(Service);
         var allCodes = new List<StoreTerritory>();
 
         Console.WriteLine("loading supported territories ids...");
 
         //FIXME: what if more that 200?
-        var response = await territoriesApi.TerritoriesGetCollectionAsync(limit: 200);
+        var response = await Http.GetAsync("/v1/territories?limit=200");
 
-        foreach (var territory in response.Data)
+        foreach (var territory in response["data"] as JsonArray ?? new JsonArray())
         {
-            // territory.Id - territory code (for example "USA", "UKR", "JPN")
-            // territory.Attributes.Currency - currency code (for example "USD", "UAH", "JPY")
+            // territory["id"] - territory code (for example "USA", "UKR", "JPN")
+            // territory["attributes"]["currency"] - currency code (for example "USD", "UAH", "JPY")
 
             allCodes.Add(new StoreTerritory
             (
-                territory.Id,
-                territory.Attributes.Currency
+                (string)territory!["id"]!,
+                (string)territory["attributes"]!["currency"]!
             ));
         }
 

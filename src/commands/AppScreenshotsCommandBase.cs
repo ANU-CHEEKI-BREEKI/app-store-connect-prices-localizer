@@ -1,6 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
-using Newtonsoft.Json;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// shared plumbing for the commands that work with the product page screenshots.
@@ -20,19 +18,19 @@ public abstract class AppScreenshotsCommandBase : AppMetadataCommandBase
         string SetId,
         string ScreenshotId,
         string SourceFileName,
-        ImageAsset? Asset,
-        AppMediaAssetState.StateEnum? State
+        JsonNode? Asset,
+        string? State
     )
     {
         /// <summary>an image apple is still processing has no asset yet, so there is nothing to download</summary>
-        public bool IsDownloadable => Asset is not null && !string.IsNullOrWhiteSpace(Asset.TemplateUrl);
+        public bool IsDownloadable => Asset is not null && !string.IsNullOrWhiteSpace((string?)Asset["templateUrl"]);
     }
 
     /// <summary>the locales of the version, narrowed down by '--locales' when it is given</summary>
     protected List<string> FilterLocales(MetadataTarget target, bool announce = true)
     {
         var all = target.VersionLocalizations
-            .Select(l => l.Attributes?.Locale ?? "")
+            .Select(l => (string?)l["attributes"]?["locale"] ?? "")
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -81,9 +79,6 @@ public abstract class AppScreenshotsCommandBase : AppMetadataCommandBase
         List<string> displayTypeFilter,
         bool verbose)
     {
-        var localizationsApi = new AppStoreVersionLocalizationsApi(Service);
-        var setsApi = new AppScreenshotSetsApi(Service);
-
         var entries = new List<ScreenshotEntry>();
 
         foreach (var locale in locales)
@@ -92,37 +87,27 @@ public abstract class AppScreenshotsCommandBase : AppMetadataCommandBase
             if (localization is null)
                 continue;
 
-            var sets = await FetchAllPagesAsync<AppScreenshotSetsResponse, AppScreenshotSet>(
-                localizationsApi.AsynchronousClient,
-                localizationsApi.Configuration,
-                () => localizationsApi.AppStoreVersionLocalizationsAppScreenshotSetsGetToManyRelatedAsync(localization.Id, limit: 50),
-                r => r.Data,
-                r => r.Links?.Next,
-                verbose
+            var sets = await Http.GetPagedAsync(
+                $"/v1/appStoreVersionLocalizations/{(string?)localization["id"]}/appScreenshotSets?limit=50"
             );
 
             var localeCount = 0;
 
-            foreach (var set in sets)
+            foreach (var set in sets.Data)
             {
-                var displayType = DisplayTypeName(set.Attributes?.ScreenshotDisplayType);
+                var displayType = DisplayTypeName(set?["attributes"]?["screenshotDisplayType"]);
 
                 if (displayTypeFilter.Count > 0
                     && !displayTypeFilter.Any(f => string.Equals(f, displayType, StringComparison.OrdinalIgnoreCase)))
                     continue;
 
-                var screenshots = await FetchAllPagesAsync<AppScreenshotsResponse, AppScreenshot>(
-                    setsApi.AsynchronousClient,
-                    setsApi.Configuration,
-                    () => setsApi.AppScreenshotSetsAppScreenshotsGetToManyRelatedAsync(set.Id, limit: 50),
-                    r => r.Data,
-                    r => r.Links?.Next,
-                    verbose
+                var screenshots = await Http.GetPagedAsync(
+                    $"/v1/appScreenshotSets/{(string?)set?["id"]}/appScreenshots?limit=50"
                 );
 
                 // the api returns the screenshots in the order they are shown on the product page
                 var position = 0;
-                foreach (var screenshot in screenshots)
+                foreach (var screenshot in screenshots.Data)
                 {
                     position++;
 
@@ -130,11 +115,11 @@ public abstract class AppScreenshotsCommandBase : AppMetadataCommandBase
                         locale,
                         displayType,
                         position,
-                        set.Id,
-                        screenshot.Id,
-                        screenshot.Attributes?.FileName ?? screenshot.Id,
-                        screenshot.Attributes?.ImageAsset,
-                        screenshot.Attributes?.AssetDeliveryState?.State
+                        (string?)set?["id"] ?? "",
+                        (string?)screenshot?["id"] ?? "",
+                        (string?)screenshot?["attributes"]?["fileName"] ?? (string?)screenshot?["id"] ?? "",
+                        screenshot?["attributes"]?["imageAsset"],
+                        StateName(screenshot?["attributes"]?["assetDeliveryState"]?["state"])
                     ));
 
                     localeCount++;
@@ -142,22 +127,64 @@ public abstract class AppScreenshotsCommandBase : AppMetadataCommandBase
             }
 
             if (verbose)
-                Console.WriteLine($"      {locale,-12} {localeCount} screenshots in {sets.Count} sets");
+                Console.WriteLine($"      {locale,-12} {localeCount} screenshots in {sets.Data.Count} sets");
         }
 
         return entries;
     }
 
-    /// <summary>the generated enum drops the underscores, the json value is the name apple actually uses</summary>
-    protected static string DisplayTypeName(ScreenshotDisplayType? displayType)
-        => displayType is null
-            ? "UNKNOWN"
-            : JsonConvert.SerializeObject(displayType).Trim('"');
+    /// <summary>the json value is the name apple actually uses, missing means the api added a new one</summary>
+    protected static string DisplayTypeName(JsonNode? displayType)
+        => (string?)displayType ?? "UNKNOWN";
+
+    /// <summary>the state the way the generated client printed it: the enum names had no underscores</summary>
+    protected static string? StateName(JsonNode? state)
+        => ((string?)state)?.Replace("_", "");
+
+    /// <summary>
+    /// every display type the api knows about, the way the generated client's enum listed them.
+    /// a new device size apple adds shows up in apple's api docs, not here
+    /// </summary>
+    protected static readonly string[] KnownDisplayTypes =
+    {
+        "APP_IPHONE_67",
+        "APP_IPHONE_61",
+        "APP_IPHONE_65",
+        "APP_IPHONE_58",
+        "APP_IPHONE_55",
+        "APP_IPHONE_47",
+        "APP_IPHONE_40",
+        "APP_IPHONE_35",
+        "APP_IPAD_PRO_3GEN_129",
+        "APP_IPAD_PRO_3GEN_11",
+        "APP_IPAD_PRO_129",
+        "APP_IPAD_105",
+        "APP_IPAD_97",
+        "APP_DESKTOP",
+        "APP_WATCH_ULTRA",
+        "APP_WATCH_SERIES_10",
+        "APP_WATCH_SERIES_7",
+        "APP_WATCH_SERIES_4",
+        "APP_WATCH_SERIES_3",
+        "APP_APPLE_TV",
+        "APP_APPLE_VISION_PRO",
+        "IMESSAGE_APP_IPHONE_67",
+        "IMESSAGE_APP_IPHONE_61",
+        "IMESSAGE_APP_IPHONE_65",
+        "IMESSAGE_APP_IPHONE_58",
+        "IMESSAGE_APP_IPHONE_55",
+        "IMESSAGE_APP_IPHONE_47",
+        "IMESSAGE_APP_IPHONE_40",
+        "IMESSAGE_APP_IPAD_PRO_3GEN_129",
+        "IMESSAGE_APP_IPAD_PRO_3GEN_11",
+        "IMESSAGE_APP_IPAD_PRO_129",
+        "IMESSAGE_APP_IPAD_105",
+        "IMESSAGE_APP_IPAD_97",
+    };
 
     /// <summary>every display type the api knows about, as the codes '--display-types' expects</summary>
     protected static List<string> AllDisplayTypes()
-        => Enum.GetValues<ScreenshotDisplayType>()
-            .Select(t => DisplayTypeName(t))
+        => KnownDisplayTypes
             .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
             .ToList();
 

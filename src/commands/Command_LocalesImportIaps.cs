@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Writes a translated products csv back into the In-App Purchase localizations.
@@ -148,7 +147,7 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
             if (submit && changedProducts.Count > 0)
             {
                 Console.WriteLine();
-                await Command_LocalesSubmit.SubmitProductsAsync(Service, changedProducts, DryRun, Verbose);
+                await Command_LocalesSubmit.SubmitProductsAsync(Http, changedProducts, DryRun, Verbose);
             }
             else if (changedProducts.Count > 0)
             {
@@ -352,10 +351,10 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
 
             var fieldsChanged = new List<string>();
 
-            if (IsChanged(name, existing.Attributes?.Name)) fieldsChanged.Add(NameField);
+            if (IsChanged(name, (string?)existing["attributes"]?["name"])) fieldsChanged.Add(NameField);
             else name = null;
 
-            if (IsChanged(description, existing.Attributes?.Description)) fieldsChanged.Add(DescriptionField);
+            if (IsChanged(description, (string?)existing["attributes"]?["description"])) fieldsChanged.Add(DescriptionField);
             else description = null;
 
             if (fieldsChanged.Count == 0)
@@ -387,25 +386,24 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
     {
         try
         {
-            var request = new InAppPurchaseLocalizationCreateRequest(
-                new InAppPurchaseLocalizationCreateRequestData(
-                    InAppPurchaseLocalizationCreateRequestData.TypeEnum.InAppPurchaseLocalizations,
-                    new InAppPurchaseLocalizationCreateRequestDataAttributes(name, locale, description),
-                    new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationships(
-                        inAppPurchaseV2: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
-                            new AppRelationshipsInAppPurchasesDataInner(
-                                AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases,
-                                group.Product.Product.Id
-                            )
-                        )
-                    )
-                )
+            var body = AscHttp.Body(
+                "inAppPurchaseLocalizations",
+                new JsonObject
+                {
+                    ["inAppPurchaseV2"] = AscHttp.Link("inAppPurchases", (string?)group.Product.Product?["id"] ?? ""),
+                },
+                new JsonObject
+                {
+                    ["name"] = name,
+                    ["locale"] = locale,
+                    ["description"] = description,
+                }
             );
 
-            var response = await new InAppPurchaseLocalizationsApi(Service).InAppPurchaseLocalizationsCreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v1/inAppPurchaseLocalizations", body);
 
-            if (response?.Data is not null)
-                group.Product.Localizations.Add(response.Data);
+            if (response["data"] is not null)
+                group.Product.Localizations.Add(response["data"]);
 
             created.Add($"{group.ProductId} [{locale}]");
             return true;
@@ -419,27 +417,24 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
     }
 
     private async Task<bool> UpdateAsync(
-        ProductValues group, string locale, InAppPurchaseLocalization existing,
+        ProductValues group, string locale, JsonNode existing,
         string? name, string? description, List<string> fieldsChanged,
         List<string> updated, List<string> failed)
     {
         try
         {
-            // the generated client serializes every attribute, including the ones left null, and
+            // both attributes go into every request, including the one that is not changing:
             // App Store Connect reads an explicit null as "clear this field". So the half that is
             // not changing has to be resent as it is
-            var request = new InAppPurchaseLocalizationUpdateRequest(
-                new InAppPurchaseLocalizationUpdateRequestData(
-                    InAppPurchaseLocalizationUpdateRequestData.TypeEnum.InAppPurchaseLocalizations,
-                    existing.Id,
-                    new GameCenterActivityLocalizationUpdateRequestDataAttributes(
-                        name: name ?? existing.Attributes?.Name,
-                        description: description ?? existing.Attributes?.Description
-                    )
-                )
-            );
+            var id = (string?)existing["id"] ?? "";
 
-            await new InAppPurchaseLocalizationsApi(Service).InAppPurchaseLocalizationsUpdateInstanceAsync(existing.Id, request);
+            var body = AscHttp.BodyWithAttributes("inAppPurchaseLocalizations", id, new JsonObject
+            {
+                ["name"] = name ?? (string?)existing["attributes"]?["name"],
+                ["description"] = description ?? (string?)existing["attributes"]?["description"],
+            });
+
+            await Http.PatchAsync($"/v1/inAppPurchaseLocalizations/{id}", body);
 
             updated.Add($"{group.ProductId} [{locale}] {string.Join("/", fieldsChanged)}");
             return true;

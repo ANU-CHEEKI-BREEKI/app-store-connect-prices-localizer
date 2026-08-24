@@ -1,4 +1,3 @@
-using AppStoreConnect.Net.Model;
 using Newtonsoft.Json;
 
 public class Config
@@ -53,8 +52,19 @@ public class ProductDefinition
 {
     public string ProductId = "";
     public string ReferenceName = "";
-    public InAppPurchaseType Type;
+    public IapType Type;
     public decimal DefaultPrice;
     public string LocalizedTitle = "";
     public string LocalizedDescription = "";
+}
+
+/// <summary>
+/// The three purchase kinds this tool creates. Named exactly like the old client's enum members so
+/// a '{definition.Type}' print stays byte-for-byte what it always was.
+/// </summary>
+public enum IapType
+{
+    CONSUMABLE,
+    NONCONSUMABLE,
+    NONRENEWINGSUBSCRIPTION,
 }

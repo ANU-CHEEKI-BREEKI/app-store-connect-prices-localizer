@@ -1,7 +1,5 @@
 using System.Globalization;
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 public class Command_CreateIaps : CommandBase
 {
@@ -62,12 +60,11 @@ public class Command_CreateIaps : CommandBase
             }
 
             Console.WriteLine("   -> Receiving IAP list...");
-            var appApi = new AppsApi(Service);
-            var iaps = await appApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId, limit: 200);
+            var page = await Http.GetPagedAsync($"/v1/apps/{Config.AppId}/inAppPurchasesV2?limit=200");
 
-            var existing = iaps.Data
-                .Where(p => p.Attributes?.ProductId != null)
-                .ToDictionary(p => p.Attributes.ProductId, p => p);
+            var existing = page.Data
+                .Where(p => (string?)p?["attributes"]?["productId"] != null)
+                .ToDictionary(p => (string)p!["attributes"]!["productId"]!, p => p!);
 
             var territories = await GetAllTerritoriesAsync();
 
@@ -121,7 +118,7 @@ public class Command_CreateIaps : CommandBase
             if (pricesSetup.Count > 0)
             {
                 var restorer = new Command_Restore();
-                restorer.Initialize(Service, Config, Args);
+                restorer.Initialize(Auth, Config, Args);
                 await restorer.SetPrices(pricesSetup, verbose);
             }
 
@@ -192,7 +189,8 @@ public class Command_CreateIaps : CommandBase
     private static string Get(Dictionary<string, string> row, string column)
         => row.TryGetValue(column, out var value) ? value : "";
 
-    private static bool TryParseType(string raw, out InAppPurchaseType type)
+    // ProductDefinition (src/Configs.cs) still carries the generated client's enum, so the type is
+    private static bool TryParseType(string raw, out IapType type)
     {
         // 'non-consumable', 'NON_CONSUMABLE', 'nonConsumable' all mean the same thing
         var normalized = new string(raw.Where(char.IsLetter).ToArray()).ToLowerInvariant();
@@ -200,13 +198,13 @@ public class Command_CreateIaps : CommandBase
         switch (normalized)
         {
             case "consumable":
-                type = InAppPurchaseType.CONSUMABLE;
+                type = IapType.CONSUMABLE;
                 return true;
             case "nonconsumable":
-                type = InAppPurchaseType.NONCONSUMABLE;
+                type = IapType.NONCONSUMABLE;
                 return true;
             case "nonrenewingsubscription":
-                type = InAppPurchaseType.NONRENEWINGSUBSCRIPTION;
+                type = IapType.NONRENEWINGSUBSCRIPTION;
                 return true;
             default:
                 type = default;
@@ -214,44 +212,47 @@ public class Command_CreateIaps : CommandBase
         }
     }
 
-    private async Task<InAppPurchaseV2?> CreateIap(ProductDefinition definition, bool verbose)
+    /// <summary>the value the api takes: the enum's serialized name, underscores and all</summary>
+    private static string ApiTypeName(IapType type) => type switch
+    {
+        IapType.CONSUMABLE => "CONSUMABLE",
+        IapType.NONCONSUMABLE => "NON_CONSUMABLE",
+        IapType.NONRENEWINGSUBSCRIPTION => "NON_RENEWING_SUBSCRIPTION",
+        _ => "",
+    };
+
+    private async Task<JsonNode?> CreateIap(ProductDefinition definition, bool verbose)
     {
         Console.WriteLine($"   -> Creating IAP: {definition.ProductId} ({definition.Type})...");
 
-        var request = new InAppPurchaseV2CreateRequest(
-            data: new InAppPurchaseV2CreateRequestData(
-                type: InAppPurchaseV2CreateRequestData.TypeEnum.InAppPurchases,
-                attributes: new InAppPurchaseV2CreateRequestDataAttributes(
-                    name: definition.ReferenceName,
-                    productId: definition.ProductId,
-                    inAppPurchaseType: definition.Type,
-                    familySharable: false
-                ),
-                relationships: new AccessibilityDeclarationCreateRequestDataRelationships(
-                    app: new AccessibilityDeclarationCreateRequestDataRelationshipsApp(
-                        data: new AccessibilityDeclarationCreateRequestDataRelationshipsAppData(
-                            type: AccessibilityDeclarationCreateRequestDataRelationshipsAppData.TypeEnum.Apps,
-                            id: Config.AppId
-                        )
-                    )
-                )
-            )
+        var request = AscHttp.Body("inAppPurchases",
+            new JsonObject
+            {
+                ["app"] = AscHttp.Link("apps", Config.AppId),
+            },
+            new JsonObject
+            {
+                ["name"] = definition.ReferenceName,
+                ["productId"] = definition.ProductId,
+                ["inAppPurchaseType"] = ApiTypeName(definition.Type),
+                ["familySharable"] = false,
+            }
         );
 
         try
         {
-            var response = await new InAppPurchasesApi(Service).InAppPurchasesV2CreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v2/inAppPurchases", request);
 
             if (verbose)
-                Console.WriteLine($"[SUCCESS] created {definition.ProductId} (ID: {response.Data.Id})");
+                Console.WriteLine($"[SUCCESS] created {definition.ProductId} (ID: {(string?)response["data"]?["id"]})");
 
-            return response.Data;
+            return response["data"];
         }
-        catch (ApiException ex)
+        catch (AscApiException ex)
         {
             Console.WriteLine($"[API ERROR] failed to create {definition.ProductId}: {ex.Message}");
-            Console.WriteLine($"Status: {ex.ErrorCode}");
-            Console.WriteLine($"Response Body: {ex.ErrorContent}");
+            Console.WriteLine($"Status: {ex.StatusCode}");
+            Console.WriteLine($"Response Body: {ex.ResponseBody}");
         }
         catch (Exception ex)
         {
@@ -261,18 +262,17 @@ public class Command_CreateIaps : CommandBase
         return null;
     }
 
-    private async Task EnsureLocalization(InAppPurchaseV2 iap, ProductDefinition definition, bool verbose)
+    private async Task EnsureLocalization(JsonNode iap, ProductDefinition definition, bool verbose)
     {
         var locale = string.IsNullOrWhiteSpace(Config.DefaultLocale) ? "en-US" : Config.DefaultLocale;
-        var iapApi = new InAppPurchasesApi(Service);
 
         try
         {
-            var localizations = await iapApi.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(iap.Id, limit: 200);
+            var localizations = await Http.GetAsync($"/v2/inAppPurchases/{(string?)iap["id"]}/inAppPurchaseLocalizations?limit=200");
 
-            var already = localizations.Data?.Any(
-                l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase)
-            ) ?? false;
+            var already = (localizations["data"] as JsonArray ?? new JsonArray()).Any(
+                l => string.Equals((string?)l?["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase)
+            );
 
             if (already)
             {
@@ -283,35 +283,29 @@ public class Command_CreateIaps : CommandBase
 
             Console.WriteLine($"   -> Adding '{locale}' localization for {definition.ProductId}...");
 
-            var request = new InAppPurchaseLocalizationCreateRequest(
-                data: new InAppPurchaseLocalizationCreateRequestData(
-                    type: InAppPurchaseLocalizationCreateRequestData.TypeEnum.InAppPurchaseLocalizations,
-                    attributes: new InAppPurchaseLocalizationCreateRequestDataAttributes(
-                        name: definition.LocalizedTitle,
-                        locale: locale,
-                        description: definition.LocalizedDescription
-                    ),
-                    relationships: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationships(
-                        inAppPurchaseV2: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
-                            data: new(
-                                id: iap.Id,
-                                type: AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases
-                            )
-                        )
-                    )
-                )
+            var request = AscHttp.Body("inAppPurchaseLocalizations",
+                new JsonObject
+                {
+                    ["inAppPurchaseV2"] = AscHttp.Link("inAppPurchases", (string)iap["id"]!),
+                },
+                new JsonObject
+                {
+                    ["name"] = definition.LocalizedTitle,
+                    ["locale"] = locale,
+                    ["description"] = definition.LocalizedDescription,
+                }
             );
 
-            var response = await new InAppPurchaseLocalizationsApi(Service).InAppPurchaseLocalizationsCreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v1/inAppPurchaseLocalizations", request);
 
             if (verbose)
-                Console.WriteLine($"[SUCCESS] localization created (ID: {response.Data.Id})");
+                Console.WriteLine($"[SUCCESS] localization created (ID: {(string?)response["data"]?["id"]})");
         }
-        catch (ApiException ex)
+        catch (AscApiException ex)
         {
             Console.WriteLine($"[API ERROR] failed to localize {definition.ProductId}: {ex.Message}");
-            Console.WriteLine($"Status: {ex.ErrorCode}");
-            Console.WriteLine($"Response Body: {ex.ErrorContent}");
+            Console.WriteLine($"Status: {ex.StatusCode}");
+            Console.WriteLine($"Response Body: {ex.ResponseBody}");
         }
         catch (Exception ex)
         {
@@ -319,9 +313,9 @@ public class Command_CreateIaps : CommandBase
         }
     }
 
-    private async Task EnsureAvailability(InAppPurchaseV2 iap, List<Command_Localize.StoreTerritory> territories, bool verbose)
+    private async Task EnsureAvailability(JsonNode iap, List<Command_Localize.StoreTerritory> territories, bool verbose)
     {
-        var productId = iap.Attributes?.ProductId;
+        var productId = (string?)iap["attributes"]?["productId"];
 
         try
         {
@@ -334,40 +328,29 @@ public class Command_CreateIaps : CommandBase
 
             Console.WriteLine($"   -> Making {productId} available in all {territories.Count} territories...");
 
-            var request = new InAppPurchaseAvailabilityCreateRequest(
-                data: new InAppPurchaseAvailabilityCreateRequestData(
-                    type: InAppPurchaseAvailabilityCreateRequestData.TypeEnum.InAppPurchaseAvailabilities,
-                    attributes: new AppAvailabilityV2CreateRequestDataAttributes(
-                        // so the product is automatically available in territories apple adds later
-                        availableInNewTerritories: true
-                    ),
-                    relationships: new InAppPurchaseAvailabilityCreateRequestDataRelationships(
-                        inAppPurchase: new InAppPurchaseAppStoreReviewScreenshotCreateRequestDataRelationshipsInAppPurchaseV2(
-                            data: new(
-                                id: iap.Id,
-                                type: AppRelationshipsInAppPurchasesDataInner.TypeEnum.InAppPurchases
-                            )
-                        ),
-                        availableTerritories: new EndUserLicenseAgreementCreateRequestDataRelationshipsTerritories(
-                            data: territories.Select(t => new AppPricePointV3RelationshipsTerritoryData(
-                                type: AppPricePointV3RelationshipsTerritoryData.TypeEnum.Territories,
-                                id: t.Code
-                            )).ToList()
-                        )
-                    )
-                )
+            var request = AscHttp.Body("inAppPurchaseAvailabilities",
+                new JsonObject
+                {
+                    ["inAppPurchase"] = AscHttp.Link("inAppPurchases", (string)iap["id"]!),
+                    ["availableTerritories"] = AscHttp.LinkMany("territories", territories.Select(t => t.Code)),
+                },
+                new JsonObject
+                {
+                    // so the product is automatically available in territories apple adds later
+                    ["availableInNewTerritories"] = true,
+                }
             );
 
-            var response = await new InAppPurchaseAvailabilitiesApi(Service).InAppPurchaseAvailabilitiesCreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v1/inAppPurchaseAvailabilities", request);
 
             if (verbose)
-                Console.WriteLine($"[SUCCESS] availability created (ID: {response.Data.Id})");
+                Console.WriteLine($"[SUCCESS] availability created (ID: {(string?)response["data"]?["id"]})");
         }
-        catch (ApiException ex)
+        catch (AscApiException ex)
         {
             Console.WriteLine($"[API ERROR] failed to set availability for {productId}: {ex.Message}");
-            Console.WriteLine($"Status: {ex.ErrorCode}");
-            Console.WriteLine($"Response Body: {ex.ErrorContent}");
+            Console.WriteLine($"Status: {ex.StatusCode}");
+            Console.WriteLine($"Response Body: {ex.ResponseBody}");
         }
         catch (Exception ex)
         {
@@ -375,16 +358,15 @@ public class Command_CreateIaps : CommandBase
         }
     }
 
-    private async Task<bool> HasAvailability(InAppPurchaseV2 iap)
+    private async Task<bool> HasAvailability(JsonNode iap)
     {
         try
         {
-            var response = await new InAppPurchasesApi(Service)
-                .InAppPurchasesV2InAppPurchaseAvailabilityGetToOneRelatedAsync(iap.Id);
+            var response = await Http.GetAsync($"/v2/inAppPurchases/{(string?)iap["id"]}/inAppPurchaseAvailability");
 
-            return response?.Data is not null;
+            return response["data"] is not null;
         }
-        catch (ApiException ex) when (ex.ErrorCode == 404)
+        catch (AscApiException ex) when (ex.StatusCode == 404)
         {
             // no availability relationship yet
             return false;
@@ -397,7 +379,7 @@ public class Command_CreateIaps : CommandBase
     private async Task<List<Command_Localize.StoreTerritory>> GetAllTerritoriesAsync()
     {
         var localizeCommand = new Command_Localize();
-        localizeCommand.Initialize(Service, Config, Args);
+        localizeCommand.Initialize(Auth, Config, Args);
         return await localizeCommand.GetAllTerritoriesAsync();
     }
 

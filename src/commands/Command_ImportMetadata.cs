@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 public class Command_ImportMetadata : AppMetadataCommandBase
 {
@@ -140,7 +139,7 @@ public class Command_ImportMetadata : AppMetadataCommandBase
             if (addedLanguages && !dryRun)
             {
                 Console.WriteLine("   -> re-reading version localizations, the new languages brought their own...");
-                target.VersionLocalizations = await GetVersionLocalizationsAsync(target.Version.Id, verbose);
+                target.VersionLocalizations = await GetVersionLocalizationsAsync((string?)target.Version["id"] ?? "", verbose);
             }
 
             Console.WriteLine("   -> App store version (promotional text, description, what's new, keywords)...");
@@ -403,27 +402,22 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
             try
             {
-                var request = new AppInfoLocalizationCreateRequest(
-                    data: new AppInfoLocalizationCreateRequestData(
-                        type: AppInfoLocalizationCreateRequestData.TypeEnum.AppInfoLocalizations,
-                        attributes: new AppInfoLocalizationCreateRequestDataAttributes(
-                            locale: locale.Locale,
-                            name: name,
-                            subtitle: subtitle
-                        ),
-                        relationships: new AppInfoLocalizationCreateRequestDataRelationships(
-                            appInfo: new AppInfoLocalizationCreateRequestDataRelationshipsAppInfo(
-                                data: new AppInfoLocalizationRelationshipsAppInfoData(
-                                    type: AppInfoLocalizationRelationshipsAppInfoData.TypeEnum.AppInfos,
-                                    id: target.AppInfo.Id
-                                )
-                            )
-                        )
-                    )
+                var request = AscHttp.Body(
+                    "appInfoLocalizations",
+                    new JsonObject
+                    {
+                        ["appInfo"] = AscHttp.Link("appInfos", (string?)target.AppInfo["id"] ?? ""),
+                    },
+                    new JsonObject
+                    {
+                        ["locale"] = locale.Locale,
+                        ["name"] = name,
+                        ["subtitle"] = subtitle,
+                    }
                 );
 
-                var response = await new AppInfoLocalizationsApi(Service).AppInfoLocalizationsCreateInstanceAsync(request);
-                target.AppInfoLocalizations.Add(response.Data);
+                var response = await Http.PostAsync("/v1/appInfoLocalizations", request);
+                target.AppInfoLocalizations.Add(response["data"]!);
 
                 created.Add($"{locale.Locale} name/subtitle");
                 return true;
@@ -440,10 +434,10 @@ public class Command_ImportMetadata : AppMetadataCommandBase
         // only send what actually differs, App Store Connect requests are slow and rate limited
         var changed = new List<string>();
 
-        if (IsChanged(name, existing.Attributes?.Name)) changed.Add("name");
+        if (IsChanged(name, (string?)existing["attributes"]?["name"])) changed.Add("name");
         else name = null;
 
-        if (IsChanged(subtitle, existing.Attributes?.Subtitle)) changed.Add("subtitle");
+        if (IsChanged(subtitle, (string?)existing["attributes"]?["subtitle"])) changed.Add("subtitle");
         else subtitle = null;
 
         if (changed.Count == 0)
@@ -463,15 +457,15 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
         try
         {
-            var request = new AppInfoLocalizationUpdateRequest(
-                data: new AppInfoLocalizationUpdateRequestData(
-                    type: AppInfoLocalizationUpdateRequestData.TypeEnum.AppInfoLocalizations,
-                    id: existing.Id,
-                    attributes: BuildAppInfoAttributes(existing, name, subtitle)
-                )
+            var existingId = (string?)existing["id"] ?? "";
+
+            var request = AscHttp.BodyWithAttributes(
+                "appInfoLocalizations",
+                existingId,
+                BuildAppInfoAttributes(existing, name, subtitle)
             );
 
-            await new AppInfoLocalizationsApi(Service).AppInfoLocalizationsUpdateInstanceAsync(existing.Id, request);
+            await Http.PatchAsync($"/v1/appInfoLocalizations/{existingId}", request);
             updated.Add($"{locale.Locale} {string.Join("/", changed)}");
         }
         catch (Exception ex)
@@ -516,29 +510,24 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
             try
             {
-                var request = new AppStoreVersionLocalizationCreateRequest(
-                    data: new AppStoreVersionLocalizationCreateRequestData(
-                        type: AppStoreVersionLocalizationCreateRequestData.TypeEnum.AppStoreVersionLocalizations,
-                        attributes: new AppStoreVersionLocalizationCreateRequestDataAttributes(
-                            description: description,
-                            locale: locale.Locale,
-                            keywords: keywords,
-                            promotionalText: promotionalText,
-                            whatsNew: whatsNew
-                        ),
-                        relationships: new AlternativeDistributionPackageCreateRequestDataRelationships(
-                            appStoreVersion: new AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersion(
-                                data: new AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersionData(
-                                    type: AlternativeDistributionPackageCreateRequestDataRelationshipsAppStoreVersionData.TypeEnum.AppStoreVersions,
-                                    id: target.Version.Id
-                                )
-                            )
-                        )
-                    )
+                var request = AscHttp.Body(
+                    "appStoreVersionLocalizations",
+                    new JsonObject
+                    {
+                        ["appStoreVersion"] = AscHttp.Link("appStoreVersions", (string?)target.Version["id"] ?? ""),
+                    },
+                    new JsonObject
+                    {
+                        ["description"] = description,
+                        ["locale"] = locale.Locale,
+                        ["keywords"] = keywords,
+                        ["promotionalText"] = promotionalText,
+                        ["whatsNew"] = whatsNew,
+                    }
                 );
 
-                var response = await new AppStoreVersionLocalizationsApi(Service).AppStoreVersionLocalizationsCreateInstanceAsync(request);
-                target.VersionLocalizations.Add(response.Data);
+                var response = await Http.PostAsync("/v1/appStoreVersionLocalizations", request);
+                target.VersionLocalizations.Add(response["data"]!);
 
                 created.Add($"{locale.Locale} version texts");
             }
@@ -553,16 +542,16 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
         var changed = new List<string>();
 
-        if (IsChanged(promotionalText, existing.Attributes?.PromotionalText)) changed.Add("promotional_text");
+        if (IsChanged(promotionalText, (string?)existing["attributes"]?["promotionalText"])) changed.Add("promotional_text");
         else promotionalText = null;
 
-        if (IsChanged(description, existing.Attributes?.Description)) changed.Add("description");
+        if (IsChanged(description, (string?)existing["attributes"]?["description"])) changed.Add("description");
         else description = null;
 
-        if (IsChanged(whatsNew, existing.Attributes?.WhatsNew)) changed.Add("whats_new");
+        if (IsChanged(whatsNew, (string?)existing["attributes"]?["whatsNew"])) changed.Add("whats_new");
         else whatsNew = null;
 
-        if (IsChanged(keywords, existing.Attributes?.Keywords)) changed.Add("keywords");
+        if (IsChanged(keywords, (string?)existing["attributes"]?["keywords"])) changed.Add("keywords");
         else keywords = null;
 
         if (changed.Count == 0)
@@ -582,15 +571,15 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
         try
         {
-            var request = new AppStoreVersionLocalizationUpdateRequest(
-                data: new AppStoreVersionLocalizationUpdateRequestData(
-                    type: AppStoreVersionLocalizationUpdateRequestData.TypeEnum.AppStoreVersionLocalizations,
-                    id: existing.Id,
-                    attributes: BuildVersionAttributes(existing, description, keywords, promotionalText, whatsNew)
-                )
+            var existingId = (string?)existing["id"] ?? "";
+
+            var request = AscHttp.BodyWithAttributes(
+                "appStoreVersionLocalizations",
+                existingId,
+                BuildVersionAttributes(existing, description, keywords, promotionalText, whatsNew)
             );
 
-            await new AppStoreVersionLocalizationsApi(Service).AppStoreVersionLocalizationsUpdateInstanceAsync(existing.Id, request);
+            await Http.PatchAsync($"/v1/appStoreVersionLocalizations/{existingId}", request);
             updated.Add($"{locale.Locale} {string.Join("/", changed)}");
         }
         catch (Exception ex)

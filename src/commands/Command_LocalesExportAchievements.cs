@@ -140,7 +140,7 @@ public class Command_LocalesExportAchievements : GameCenterCommandBase
         return row;
     }
 
-    public static string? ValueOf(AppStoreConnect.Net.Model.GameCenterAchievementLocalization? localization, string field)
+    public static string? ValueOf(Localization? localization, string field)
         => field switch
         {
             NameField => localization?.Attributes?.Name,

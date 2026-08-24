@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Shows which languages exist where. App Store Connect keeps three independent language lists for
@@ -78,31 +77,24 @@ public class Command_LocalesList : AppMetadataCommandBase
     {
         Console.WriteLine("   -> Receiving In-App Purchases...");
 
-        var appsApi = new AppsApi(Service);
+        var page = await Http.GetPagedAsync($"/v1/apps/{Config.AppId}/inAppPurchasesV2?limit=200");
 
-        var products = await FetchAllPagesAsync<InAppPurchasesV2Response, InAppPurchaseV2>(
-            appsApi.AsynchronousClient,
-            appsApi.Configuration,
-            () => appsApi.AppsInAppPurchasesV2GetToManyRelatedAsync(Config.AppId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
+        var products = FilterByIap(page.Data, p => (string?)p?["attributes"]?["productId"]);
 
-        products = FilterByIap(products, p => p.Attributes?.ProductId);
-
-        var iapApi = new InAppPurchasesApi(Service);
         var locales = new List<string>();
 
         foreach (var product in products)
         {
+            var productId = (string?)product?["attributes"]?["productId"];
+
             try
             {
-                var response = await iapApi.InAppPurchasesV2InAppPurchaseLocalizationsGetToManyRelatedAsync(product.Id, limit: 200);
+                var response = await Http.GetAsync($"/v2/inAppPurchases/{(string?)product?["id"]}/inAppPurchaseLocalizations?limit=200");
+                var localizations = response["data"] as JsonArray ?? new JsonArray();
 
-                foreach (var localization in response?.Data ?? new())
+                foreach (var localization in localizations)
                 {
-                    var locale = localization.Attributes?.Locale;
+                    var locale = (string?)localization?["attributes"]?["locale"];
                     if (!string.IsNullOrWhiteSpace(locale) && !locales.Contains(locale, StringComparer.OrdinalIgnoreCase))
                         locales.Add(locale);
                 }
@@ -111,63 +103,122 @@ public class Command_LocalesList : AppMetadataCommandBase
                 // that one carries its own state, and this is the only place it shows up
                 if (verbose)
                 {
-                    var states = (response?.Data ?? new())
-                        .GroupBy(l => l.Attributes?.State?.ToString() ?? "?")
+                    var states = localizations
+                        .GroupBy(l => StateName(l?["attributes"]?["state"]) ?? "?")
                         .Select(g => $"{g.Count()} {g.Key}");
 
-                    Console.WriteLine($"      {product.Attributes?.ProductId,-48} {product.Attributes?.State}: {string.Join(", ", states)}");
+                    Console.WriteLine($"      {productId,-48} {StateName(product?["attributes"]?["state"])}: {string.Join(", ", states)}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Warning: could not read the languages of {product.Attributes?.ProductId}: {ex.Message}");
+                Console.WriteLine($"Warning: could not read the languages of {productId}: {ex.Message}");
             }
         }
 
         return new Section("in-app purchases", locales, $"{products.Count} product(s)");
     }
 
+    /// <summary>the state the way the generated client printed it: the enum names had no underscores</summary>
+    private static string? StateName(JsonNode? state)
+        => ((string?)state)?.Replace("_", "");
+
     private async Task<Section> AchievementLocalesAsync(bool verbose)
     {
-        // the achievement plumbing lives on GameCenterCommandBase, and this command already
-        // inherits the metadata one. Borrowing an instance is cheaper than a third base class
-        var reader = new AchievementLocaleReader();
-        reader.Initialize(Service, Config, Args);
+        Console.WriteLine("   -> Receiving Game Center details...");
 
-        return await reader.ReadAsync(verbose);
-    }
+        JsonNode? detail;
 
-    /// <summary>the achievement half of the listing, as its own command so it gets the Game Center plumbing</summary>
-    private class AchievementLocaleReader : GameCenterCommandBase
-    {
-        protected override TextField[] Fields => Array.Empty<TextField>();
-
-        public override string Name => "locales list";
-        public override string Description => "";
-        public override void PrintHelp() { }
-
-        protected override Task InternalExecuteAsync() => Task.CompletedTask;
-
-        public async Task<Section> ReadAsync(bool verbose)
+        try
         {
-            var achievements = await GetAchievementsAsync(verbose);
-
-            if (achievements is null)
-                return new Section("game center achievements", new List<string>(), "no Game Center");
-
-            var locales = achievements
-                .SelectMany(a => a.Locales)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            var withoutImage = achievements.Sum(a => a.Localizations.Count(l => a.ImageOf(l) is null));
-
-            var note = withoutImage == 0
-                ? $"{achievements.Count} achievement(s)"
-                : $"{achievements.Count} achievement(s), {withoutImage} language(s) with no image";
-
-            return new Section("game center achievements", locales, note);
+            var response = await Http.GetAsync($"/v1/apps/{Config.AppId}/gameCenterDetail");
+            detail = response["data"];
         }
+        catch (AscApiException ex) when (ex.StatusCode == 404)
+        {
+            detail = null;
+        }
+
+        if (detail is null)
+        {
+            Console.WriteLine("[ERROR] this app has no Game Center configuration.");
+            Console.WriteLine("        turn Game Center on in App Store Connect first.");
+            return new Section("game center achievements", new List<string>(), "no Game Center");
+        }
+
+        // the fork: an app in a game center group shares the group's achievements
+        // and its own detail has none
+        var groupId = (string?)detail["relationships"]?["gameCenterGroup"]?["data"]?["id"];
+
+        var achievementsPage = string.IsNullOrWhiteSpace(groupId)
+            ? await Http.GetPagedAsync($"/v1/gameCenterDetails/{(string?)detail["id"]}/gameCenterAchievements?limit=200")
+            : await Http.GetPagedAsync($"/v1/gameCenterGroups/{groupId}/gameCenterAchievements?limit=200");
+
+        if (!string.IsNullOrWhiteSpace(groupId))
+            Console.WriteLine($"   -> this app is in a Game Center group, its achievements are shared.");
+
+        var achievements = achievementsPage.Data
+            .Where(a => !string.IsNullOrWhiteSpace((string?)a?["attributes"]?["vendorIdentifier"]))
+            .OrderBy(a => (string?)a?["attributes"]?["referenceName"], StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Console.WriteLine($"   -> {achievements.Count} achievement(s), receiving their languages...");
+
+        var locales = new List<string>();
+        var withoutImage = 0;
+
+        foreach (var achievement in achievements)
+        {
+            var vendorId = (string?)achievement?["attributes"]?["vendorIdentifier"] ?? "";
+
+            try
+            {
+                // the image rides along in the same request: a localization without one can never
+                // go live, so it is never just extra data
+                var response = await Http.GetAsync(
+                    $"/v1/gameCenterAchievements/{(string?)achievement?["id"]}/localizations?limit=200&include=gameCenterAchievementImage"
+                );
+
+                var localizations = response["data"] as JsonArray ?? new JsonArray();
+
+                // 'included' is a flat list, so an image is tied back to its language through the
+                // relationship the localization carries
+                var imageIds = (response["included"] as JsonArray ?? new JsonArray())
+                    .Where(i => (string?)i?["type"] == "gameCenterAchievementImages")
+                    .Select(i => (string?)i?["id"])
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id!)
+                    .ToHashSet(StringComparer.Ordinal);
+
+                var images = 0;
+
+                foreach (var localization in localizations)
+                {
+                    var locale = (string?)localization?["attributes"]?["locale"];
+                    if (!string.IsNullOrWhiteSpace(locale) && !locales.Contains(locale, StringComparer.OrdinalIgnoreCase))
+                        locales.Add(locale);
+
+                    var imageId = (string?)localization?["relationships"]?["gameCenterAchievementImage"]?["data"]?["id"];
+                    if (!string.IsNullOrWhiteSpace(imageId) && imageIds.Contains(imageId))
+                        images++;
+                    else
+                        withoutImage++;
+                }
+
+                if (verbose)
+                    Console.WriteLine($"      {vendorId,-32} {localizations.Count} language(s), {images} image(s)");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: could not read the languages of {vendorId}: {ex.Message}");
+            }
+        }
+
+        var note = withoutImage == 0
+            ? $"{achievements.Count} achievement(s)"
+            : $"{achievements.Count} achievement(s), {withoutImage} language(s) with no image";
+
+        return new Section("game center achievements", locales, note);
     }
 
     private static void Print(string title, List<string> locales, string note)

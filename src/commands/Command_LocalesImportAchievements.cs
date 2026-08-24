@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Writes a translated achievements csv back into Game Center.
@@ -392,25 +391,25 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
     {
         try
         {
-            var request = new GameCenterAchievementLocalizationCreateRequest(
-                new GameCenterAchievementLocalizationCreateRequestData(
-                    GameCenterAchievementLocalizationCreateRequestData.TypeEnum.GameCenterAchievementLocalizations,
-                    new GameCenterAchievementLocalizationCreateRequestDataAttributes(locale, name, before, after ?? before),
-                    new GameCenterAchievementLocalizationCreateRequestDataRelationships(
-                        new GameCenterAchievementLocalizationCreateRequestDataRelationshipsGameCenterAchievement(
-                            new GameCenterAchievementLocalizationRelationshipsGameCenterAchievementData(
-                                GameCenterAchievementLocalizationRelationshipsGameCenterAchievementData.TypeEnum.GameCenterAchievements,
-                                group.Achievement.Data.Id
-                            )
-                        )
-                    )
-                )
+            var body = AscHttp.Body(
+                "gameCenterAchievementLocalizations",
+                new JsonObject
+                {
+                    ["gameCenterAchievement"] = AscHttp.Link("gameCenterAchievements", group.Achievement.Id),
+                },
+                new JsonObject
+                {
+                    ["locale"] = locale,
+                    ["name"] = name,
+                    ["beforeEarnedDescription"] = before,
+                    ["afterEarnedDescription"] = after ?? before,
+                }
             );
 
-            var response = await new GameCenterAchievementLocalizationsApi(Service).GameCenterAchievementLocalizationsCreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v1/gameCenterAchievementLocalizations", body);
 
-            if (response?.Data is not null)
-                group.Achievement.Localizations.Add(response.Data);
+            if (response["data"] is JsonNode data)
+                group.Achievement.Localizations.Add(new Localization(data));
 
             created.Add($"{group.VendorId} [{locale}]");
             return true;
@@ -424,28 +423,27 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
     }
 
     private async Task<bool> UpdateAsync(
-        AchievementValues group, string locale, GameCenterAchievementLocalization existing,
+        AchievementValues group, string locale, Localization existing,
         string? name, string? before, string? after, List<string> fieldsChanged,
         List<string> updated, List<string> failed)
     {
         try
         {
-            // the generated client serializes every attribute, including the ones left null, and
-            // App Store Connect reads an explicit null as "clear this field". So everything this
-            // update does not mean to change has to be resent as it is
-            var request = new GameCenterAchievementLocalizationUpdateRequest(
-                new GameCenterAchievementLocalizationUpdateRequestData(
-                    GameCenterAchievementLocalizationUpdateRequestData.TypeEnum.GameCenterAchievementLocalizations,
-                    existing.Id,
-                    new GameCenterAchievementLocalizationUpdateRequestDataAttributes(
-                        name: name ?? existing.Attributes?.Name,
-                        beforeEarnedDescription: before ?? existing.Attributes?.BeforeEarnedDescription,
-                        afterEarnedDescription: after ?? existing.Attributes?.AfterEarnedDescription
-                    )
-                )
+            // every attribute goes out, including the ones left as they are: App Store Connect
+            // reads an explicit null as "clear this field", which is also what the generated
+            // client always sent. So everything this update does not mean to change is resent as it is
+            var body = AscHttp.BodyWithAttributes(
+                "gameCenterAchievementLocalizations",
+                existing.Id,
+                new JsonObject
+                {
+                    ["name"] = name ?? existing.Attributes?.Name,
+                    ["beforeEarnedDescription"] = before ?? existing.Attributes?.BeforeEarnedDescription,
+                    ["afterEarnedDescription"] = after ?? existing.Attributes?.AfterEarnedDescription,
+                }
             );
 
-            await new GameCenterAchievementLocalizationsApi(Service).GameCenterAchievementLocalizationsUpdateInstanceAsync(existing.Id, request);
+            await Http.PatchAsync($"/v1/gameCenterAchievementLocalizations/{existing.Id}", body);
 
             updated.Add($"{group.VendorId} [{locale}] {string.Join("/", fieldsChanged)}");
             return true;
@@ -525,7 +523,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
 
                 try
                 {
-                    await CopyImageAsync(http, achievement, target, bytes, fileName, Verbose);
+                    await CopyImageAsync(achievement, target, bytes, fileName, Verbose);
 
                     lock (updated)
                     {
@@ -563,7 +561,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
 
         // only a new achievement needs review; a language added to a live one is live already
         var submit = new Command_LocalesSubmit();
-        submit.Initialize(Service, Config, Args.Where(a => a != "--achievement").Concat(new[] { "--achievements" }).ToArray());
+        submit.Initialize(Auth, Config, Args.Where(a => a != "--achievement").Concat(new[] { "--achievements" }).ToArray());
         await submit.ExecuteAsync();
     }
 

@@ -1,6 +1,3 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
-
 /// <summary>
 /// Exports the display name and description of every In-App Purchase into a csv laid out the way
 /// translation tooling expects: one row per key, one column per language.
@@ -74,7 +71,7 @@ public class Command_LocalesExportIaps : IapLocalesCommandBase
             var path = ResolveCsvPath(Config.IapTranslationsFilePath, DefaultFileName);
 
             var products = await GetIapsAsync(Verbose);
-            products = FilterByIap(products, p => p.Product.Attributes?.ProductId);
+            products = FilterByIap(products, p => (string?)p.Product?["attributes"]?["productId"]);
 
             if (products.Count == 0)
             {

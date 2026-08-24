@@ -1,13 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\AppStoreConnectNet-main\generated\src\AppStoreConnect.Net\AppStoreConnect.Net.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="configs\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
   <PropertyGroup>

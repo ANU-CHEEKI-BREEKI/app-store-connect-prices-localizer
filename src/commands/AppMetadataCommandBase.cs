@@ -1,6 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Client;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// shared plumbing for the commands that read and write the localizable texts of the app store product page.
@@ -45,43 +43,47 @@ public abstract class AppMetadataCommandBase : CommandBase
     /// version states in which App Store Connect still lets you edit the metadata.
     /// a READY_FOR_DISTRIBUTION version is frozen, writing to it fails with a 409
     /// </summary>
-    private static readonly AppVersionState[] EditableVersionStates =
+    private static readonly string[] EditableVersionStates =
     {
-        AppVersionState.PREPAREFORSUBMISSION,
-        AppVersionState.DEVELOPERREJECTED,
-        AppVersionState.REJECTED,
-        AppVersionState.METADATAREJECTED,
-        AppVersionState.INVALIDBINARY,
-        AppVersionState.READYFORREVIEW,
-        AppVersionState.WAITINGFORREVIEW,
+        "PREPARE_FOR_SUBMISSION",
+        "DEVELOPER_REJECTED",
+        "REJECTED",
+        "METADATA_REJECTED",
+        "INVALID_BINARY",
+        "READY_FOR_REVIEW",
+        "WAITING_FOR_REVIEW",
     };
 
     /// <summary>everything the commands need to touch a single product page, in a single place</summary>
     public class MetadataTarget
     {
-        public AppStoreVersion Version { get; set; } = null!;
-        public AppInfo? AppInfo { get; set; }
+        public JsonNode Version { get; set; } = null!;
+        public JsonNode? AppInfo { get; set; }
 
-        public List<AppStoreVersionLocalization> VersionLocalizations { get; set; } = new();
-        public List<AppInfoLocalization> AppInfoLocalizations { get; set; } = new();
+        public List<JsonNode> VersionLocalizations { get; set; } = new();
+        public List<JsonNode> AppInfoLocalizations { get; set; } = new();
 
-        public string VersionString => Version.Attributes?.VersionString ?? "?";
+        public string VersionString => (string?)Version["attributes"]?["versionString"] ?? "?";
 
         /// <summary>every locale that exists on either of the two pages</summary>
         public List<string> Locales => VersionLocalizations
-            .Select(l => l.Attributes?.Locale ?? "")
-            .Concat(AppInfoLocalizations.Select(l => l.Attributes?.Locale ?? ""))
+            .Select(l => (string?)l["attributes"]?["locale"] ?? "")
+            .Concat(AppInfoLocalizations.Select(l => (string?)l["attributes"]?["locale"] ?? ""))
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(l => l, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        public AppStoreVersionLocalization? FindVersionLocalization(string locale)
-            => VersionLocalizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase));
+        public JsonNode? FindVersionLocalization(string locale)
+            => VersionLocalizations.FirstOrDefault(l => string.Equals((string?)l["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase));
 
-        public AppInfoLocalization? FindAppInfoLocalization(string locale)
-            => AppInfoLocalizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase));
+        public JsonNode? FindAppInfoLocalization(string locale)
+            => AppInfoLocalizations.FirstOrDefault(l => string.Equals((string?)l["attributes"]?["locale"], locale, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>the state the way the generated client printed it: the enum names had no underscores</summary>
+    private static string? StateName(JsonNode? state)
+        => ((string?)state)?.Replace("_", "");
 
     /// <summary>
     /// resolves the version to work with and loads all its localizations.
@@ -104,7 +106,7 @@ public abstract class AppMetadataCommandBase : CommandBase
         if (version is null)
             return null;
 
-        Console.WriteLine($"   -> using version {version.Attributes?.VersionString} ({version.Attributes?.AppVersionState}).");
+        Console.WriteLine($"   -> using version {(string?)version["attributes"]?["versionString"]} ({StateName(version["attributes"]?["appVersionState"])}).");
 
         var target = new MetadataTarget
         {
@@ -112,55 +114,56 @@ public abstract class AppMetadataCommandBase : CommandBase
             AppInfo = await GetEditableAppInfoAsync(verbose),
         };
 
-        target.VersionLocalizations = await GetVersionLocalizationsAsync(version.Id, verbose);
+        target.VersionLocalizations = await GetVersionLocalizationsAsync((string?)version["id"] ?? "", verbose);
 
         if (target.AppInfo is not null)
-            target.AppInfoLocalizations = await GetAppInfoLocalizationsAsync(target.AppInfo.Id, verbose);
+            target.AppInfoLocalizations = await GetAppInfoLocalizationsAsync((string?)target.AppInfo["id"] ?? "", verbose);
 
         return target;
     }
 
-    protected async Task<List<AppStoreVersion>> GetVersionsAsync(bool verbose)
+    protected async Task<List<JsonNode>> GetVersionsAsync(bool verbose)
     {
         Console.WriteLine("   -> Receiving app store versions...");
 
-        // only the fields below are asked for on purpose: the generated client can not deserialize
+        // only the fields below are asked for on purpose: the generated client could not deserialize
         // the empty 'earliestReleaseDate' apple returns for a version without a scheduled release
         var platform = Args.TryGetOption("--platform", "IOS").ToUpperInvariant();
 
-        var response = await new AppsApi(Service).AppsAppStoreVersionsGetToManyRelatedAsync(
-            Config.AppId,
-            filterPlatform: new List<string> { platform },
-            fieldsAppStoreVersions: new List<string> { "versionString", "appVersionState", "appStoreState", "platform", "createdDate" },
-            limit: 50
+        var response = await Http.GetAsync(
+            $"/v1/apps/{Config.AppId}/appStoreVersions"
+            + $"?filter[platform]={platform}"
+            + "&fields[appStoreVersions]=versionString,appVersionState,appStoreState,platform,createdDate"
+            + "&limit=50"
         );
 
         // newest first, so "the previous version" is just the next item in the list
-        var versions = (response.Data ?? new())
-            .OrderByDescending(v => v.Attributes?.CreatedDate ?? DateTimeOffset.MinValue)
+        var versions = (response["data"] as JsonArray ?? new JsonArray())
+            .OfType<JsonNode>()
+            .OrderByDescending(v => (DateTimeOffset?)v["attributes"]?["createdDate"] ?? DateTimeOffset.MinValue)
             .ToList();
 
         if (verbose)
         {
             foreach (var v in versions)
-                Console.WriteLine($"      {v.Attributes?.VersionString,-10} {v.Attributes?.AppVersionState,-25} created {v.Attributes?.CreatedDate:yyyy-MM-dd}");
+                Console.WriteLine($"      {(string?)v["attributes"]?["versionString"],-10} {StateName(v["attributes"]?["appVersionState"]),-25} created {(DateTimeOffset?)v["attributes"]?["createdDate"]:yyyy-MM-dd}");
         }
 
         return versions;
     }
 
     /// <summary>picks the version named by '--version', or the editable one, or the newest one</summary>
-    protected AppStoreVersion? PickVersion(List<AppStoreVersion> versions, bool requireEditable, bool verbose)
+    protected JsonNode? PickVersion(List<JsonNode> versions, bool requireEditable, bool verbose)
     {
         var requested = Args.TryGetOption("--version", "");
         if (!string.IsNullOrWhiteSpace(requested))
         {
             var explicitVersion = versions.FirstOrDefault(
-                v => string.Equals(v.Attributes?.VersionString, requested, StringComparison.OrdinalIgnoreCase)
+                v => string.Equals((string?)v["attributes"]?["versionString"], requested, StringComparison.OrdinalIgnoreCase)
             );
 
             if (explicitVersion is null)
-                Console.WriteLine($"[ERROR] no app store version '{requested}' found. Available: {string.Join(", ", versions.Select(v => v.Attributes?.VersionString))}");
+                Console.WriteLine($"[ERROR] no app store version '{requested}' found. Available: {string.Join(", ", versions.Select(v => (string?)v["attributes"]?["versionString"]))}");
 
             return explicitVersion;
         }
@@ -180,28 +183,28 @@ public abstract class AppMetadataCommandBase : CommandBase
         return versions.First();
     }
 
-    protected static bool IsEditable(AppStoreVersion version)
-        => version.Attributes?.AppVersionState is { } state && EditableVersionStates.Contains(state);
+    protected static bool IsEditable(JsonNode version)
+        => (string?)version["attributes"]?["appVersionState"] is { } state && EditableVersionStates.Contains(state);
 
     /// <summary>
     /// an app usually has two app infos: the live one and the editable one you are preparing.
     /// only the editable one accepts Name/Subtitle writes
     /// </summary>
-    protected async Task<AppInfo?> GetEditableAppInfoAsync(bool verbose)
+    protected async Task<JsonNode?> GetEditableAppInfoAsync(bool verbose)
     {
         Console.WriteLine("   -> Receiving app info...");
 
-        var response = await new AppsApi(Service).AppsAppInfosGetToManyRelatedAsync(Config.AppId, limit: 50);
-        var appInfos = response.Data ?? new();
+        var response = await Http.GetAsync($"/v1/apps/{Config.AppId}/appInfos?limit=50");
+        var appInfos = (response["data"] as JsonArray ?? new JsonArray()).OfType<JsonNode>().ToList();
 
         if (verbose)
         {
             foreach (var info in appInfos)
-                Console.WriteLine($"      appInfo {info.Id} state {info.Attributes?.State}");
+                Console.WriteLine($"      appInfo {(string?)info["id"]} state {StateName(info["attributes"]?["state"])}");
         }
 
-        var editable = appInfos.FirstOrDefault(i => i.Attributes?.State == AppInfoAttributes.StateEnum.PREPAREFORSUBMISSION)
-            ?? appInfos.FirstOrDefault(i => i.Attributes?.State != AppInfoAttributes.StateEnum.READYFORDISTRIBUTION)
+        var editable = appInfos.FirstOrDefault(i => (string?)i["attributes"]?["state"] == "PREPARE_FOR_SUBMISSION")
+            ?? appInfos.FirstOrDefault(i => (string?)i["attributes"]?["state"] != "READY_FOR_DISTRIBUTION")
             ?? appInfos.FirstOrDefault();
 
         if (editable is null)
@@ -210,17 +213,10 @@ public abstract class AppMetadataCommandBase : CommandBase
         return editable;
     }
 
-    protected async Task<List<AppStoreVersionLocalization>> GetVersionLocalizationsAsync(string versionId, bool verbose)
+    protected async Task<List<JsonNode>> GetVersionLocalizationsAsync(string versionId, bool verbose)
     {
-        var api = new AppStoreVersionsApi(Service);
-        var localizations = await FetchAllPagesAsync<AppStoreVersionLocalizationsResponse, AppStoreVersionLocalization>(
-            api.AsynchronousClient,
-            api.Configuration,
-            () => api.AppStoreVersionsAppStoreVersionLocalizationsGetToManyRelatedAsync(versionId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
+        var page = await Http.GetPagedAsync($"/v1/appStoreVersions/{versionId}/appStoreVersionLocalizations?limit=200");
+        var localizations = page.Data.OfType<JsonNode>().ToList();
 
         if (verbose)
             Console.WriteLine($"   -> {localizations.Count} version localizations.");
@@ -228,17 +224,10 @@ public abstract class AppMetadataCommandBase : CommandBase
         return localizations;
     }
 
-    protected async Task<List<AppInfoLocalization>> GetAppInfoLocalizationsAsync(string appInfoId, bool verbose)
+    protected async Task<List<JsonNode>> GetAppInfoLocalizationsAsync(string appInfoId, bool verbose)
     {
-        var api = new AppInfosApi(Service);
-        var localizations = await FetchAllPagesAsync<AppInfoLocalizationsResponse, AppInfoLocalization>(
-            api.AsynchronousClient,
-            api.Configuration,
-            () => api.AppInfosAppInfoLocalizationsGetToManyRelatedAsync(appInfoId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
+        var page = await Http.GetPagedAsync($"/v1/appInfos/{appInfoId}/appInfoLocalizations?limit=200");
+        var localizations = page.Data.OfType<JsonNode>().ToList();
 
         if (verbose)
             Console.WriteLine($"   -> {localizations.Count} app info localizations.");
@@ -249,48 +238,50 @@ public abstract class AppMetadataCommandBase : CommandBase
     /// <summary>
     /// Builds the attributes of an app store version localization PATCH.
     ///
-    /// The generated client serializes every attribute, including the ones left null, and
+    /// Every attribute is sent, including the ones left null, the way the generated client did, and
     /// App Store Connect reads an explicit null as "clear this field". So a partial update has to
     /// resend the current value of everything it does not mean to change, otherwise setting, say,
     /// the promotional text alone would wipe the description, the keywords and both urls
     /// </summary>
-    protected static AppStoreVersionLocalizationUpdateRequestDataAttributes BuildVersionAttributes(
-        AppStoreVersionLocalization current,
+    protected static JsonObject BuildVersionAttributes(
+        JsonNode current,
         string? description = null,
         string? keywords = null,
         string? promotionalText = null,
         string? whatsNew = null)
-        => new(
-            description: description ?? current.Attributes?.Description,
-            keywords: keywords ?? current.Attributes?.Keywords,
-            marketingUrl: current.Attributes?.MarketingUrl,
-            promotionalText: promotionalText ?? current.Attributes?.PromotionalText,
-            supportUrl: current.Attributes?.SupportUrl,
-            whatsNew: whatsNew ?? current.Attributes?.WhatsNew
-        );
+        => new()
+        {
+            ["description"] = description ?? (string?)current["attributes"]?["description"],
+            ["keywords"] = keywords ?? (string?)current["attributes"]?["keywords"],
+            ["marketingUrl"] = (string?)current["attributes"]?["marketingUrl"],
+            ["promotionalText"] = promotionalText ?? (string?)current["attributes"]?["promotionalText"],
+            ["supportUrl"] = (string?)current["attributes"]?["supportUrl"],
+            ["whatsNew"] = whatsNew ?? (string?)current["attributes"]?["whatsNew"],
+        };
 
     /// <summary>same as <see cref="BuildVersionAttributes"/>, for the App Information page</summary>
-    protected static AppInfoLocalizationUpdateRequestDataAttributes BuildAppInfoAttributes(
-        AppInfoLocalization current,
+    protected static JsonObject BuildAppInfoAttributes(
+        JsonNode current,
         string? name = null,
         string? subtitle = null)
-        => new(
-            name: name ?? current.Attributes?.Name,
-            subtitle: subtitle ?? current.Attributes?.Subtitle,
-            privacyPolicyUrl: current.Attributes?.PrivacyPolicyUrl,
-            privacyChoicesUrl: current.Attributes?.PrivacyChoicesUrl,
-            privacyPolicyText: current.Attributes?.PrivacyPolicyText
-        );
+        => new()
+        {
+            ["name"] = name ?? (string?)current["attributes"]?["name"],
+            ["subtitle"] = subtitle ?? (string?)current["attributes"]?["subtitle"],
+            ["privacyPolicyUrl"] = (string?)current["attributes"]?["privacyPolicyUrl"],
+            ["privacyChoicesUrl"] = (string?)current["attributes"]?["privacyChoicesUrl"],
+            ["privacyPolicyText"] = (string?)current["attributes"]?["privacyPolicyText"],
+        };
 
-    public static string? GetValue(MetadataField field, AppInfoLocalization? info, AppStoreVersionLocalization? version)
+    public static string? GetValue(MetadataField field, JsonNode? info, JsonNode? version)
         => field.Key switch
         {
-            "name" => info?.Attributes?.Name,
-            "subtitle" => info?.Attributes?.Subtitle,
-            "promotional_text" => version?.Attributes?.PromotionalText,
-            "description" => version?.Attributes?.Description,
-            "whats_new" => version?.Attributes?.WhatsNew,
-            "keywords" => version?.Attributes?.Keywords,
+            "name" => (string?)info?["attributes"]?["name"],
+            "subtitle" => (string?)info?["attributes"]?["subtitle"],
+            "promotional_text" => (string?)version?["attributes"]?["promotionalText"],
+            "description" => (string?)version?["attributes"]?["description"],
+            "whats_new" => (string?)version?["attributes"]?["whatsNew"],
+            "keywords" => (string?)version?["attributes"]?["keywords"],
             _ => null,
         };
 
@@ -332,11 +323,11 @@ public abstract class AppMetadataCommandBase : CommandBase
 
     protected static void PrintApiError(string what, Exception ex)
     {
-        if (ex is AppStoreConnect.Net.Client.ApiException api)
+                if (ex is AscApiException asc)
         {
-            Console.WriteLine($"[API ERROR] {what}: {api.Message}");
-            Console.WriteLine($"Status: {api.ErrorCode}");
-            Console.WriteLine($"Response Body: {api.ErrorContent}");
+            Console.WriteLine($"[API ERROR] {what}: {asc.Message}");
+            Console.WriteLine($"Status: {asc.StatusCode}");
+            Console.WriteLine($"Response Body: {asc.ResponseBody}");
             return;
         }
 

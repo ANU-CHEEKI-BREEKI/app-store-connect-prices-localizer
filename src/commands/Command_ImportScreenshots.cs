@@ -1,6 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
-using Newtonsoft.Json;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// uploads a folder of localized screenshots back into the editable app store version, the other
@@ -257,7 +255,7 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
                     .ThenBy(f => f.FileName, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                groups.Add(new UploadGroup(localeGroup.Key, typeGroup.Key, localization.Id, ordered));
+                groups.Add(new UploadGroup(localeGroup.Key, typeGroup.Key, (string?)localization["id"] ?? "", ordered));
             }
         }
 
@@ -282,41 +280,33 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
     /// </summary>
     private async Task ResolveSetsAsync(List<UploadGroup> groups, bool dryRun, bool verbose)
     {
-        var localizationsApi = new AppStoreVersionLocalizationsApi(Service);
-        var setsApi = new AppScreenshotSetsApi(Service);
-
         // one request per locale, not per group: all display types of a locale come back together
         foreach (var localeGroups in groups.GroupBy(g => g.LocalizationId))
         {
-            var sets = await FetchAllPagesAsync<AppScreenshotSetsResponse, AppScreenshotSet>(
-                localizationsApi.AsynchronousClient,
-                localizationsApi.Configuration,
-                () => localizationsApi.AppStoreVersionLocalizationsAppScreenshotSetsGetToManyRelatedAsync(localeGroups.Key, limit: 50),
-                r => r.Data,
-                r => r.Links?.Next,
-                verbose
+            var sets = await Http.GetPagedAsync(
+                $"/v1/appStoreVersionLocalizations/{localeGroups.Key}/appScreenshotSets?limit=50"
             );
 
             foreach (var group in localeGroups)
             {
-                var existing = sets.FirstOrDefault(
-                    s => string.Equals(DisplayTypeName(s.Attributes?.ScreenshotDisplayType), group.DisplayType, StringComparison.OrdinalIgnoreCase)
+                var existing = sets.Data.FirstOrDefault(
+                    s => string.Equals(DisplayTypeName(s?["attributes"]?["screenshotDisplayType"]), group.DisplayType, StringComparison.OrdinalIgnoreCase)
                 );
 
                 if (existing is not null)
                 {
-                    group.SetId = existing.Id;
+                    group.SetId = (string?)existing["id"];
 
-                    var screenshots = await FetchAllPagesAsync<AppScreenshotsResponse, AppScreenshot>(
-                        setsApi.AsynchronousClient,
-                        setsApi.Configuration,
-                        () => setsApi.AppScreenshotSetsAppScreenshotsGetToManyRelatedAsync(existing.Id, limit: 50),
-                        r => r.Data,
-                        r => r.Links?.Next,
-                        verbose
+                    var screenshots = await Http.GetPagedAsync(
+                        $"/v1/appScreenshotSets/{(string?)existing["id"]}/appScreenshots?limit=50"
                     );
 
-                    group.ExistingScreenshotIds = screenshots.Select(s => s.Id).ToList();
+                    group.ExistingScreenshotIds = screenshots.Data
+                        .Select(s => (string?)s?["id"])
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Select(id => id!)
+                        .ToList();
+
                     continue;
                 }
 
@@ -339,26 +329,20 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
 
         try
         {
-            var request = new AppScreenshotSetCreateRequest(
-                new AppScreenshotSetCreateRequestData(
-                    AppScreenshotSetCreateRequestData.TypeEnum.AppScreenshotSets,
-                    new AppScreenshotSetCreateRequestDataAttributes(displayType.Value),
-                    new AppPreviewSetCreateRequestDataRelationships(
-                        appStoreVersionLocalization: new AppPreviewSetRelationshipsAppStoreVersionLocalization(
-                            new AppPreviewSetRelationshipsAppStoreVersionLocalizationData(
-                                AppPreviewSetRelationshipsAppStoreVersionLocalizationData.TypeEnum.AppStoreVersionLocalizations,
-                                group.LocalizationId
-                            )
-                        )
-                    )
-                )
+            var body = AscHttp.Body(
+                "appScreenshotSets",
+                new JsonObject
+                {
+                    ["appStoreVersionLocalization"] = AscHttp.Link("appStoreVersionLocalizations", group.LocalizationId),
+                },
+                new JsonObject { ["screenshotDisplayType"] = displayType }
             );
 
-            var response = await new AppScreenshotSetsApi(Service).AppScreenshotSetsCreateInstanceAsync(request);
+            var response = await Http.PostAsync("/v1/appScreenshotSets", body);
 
             Console.WriteLine($"   -> created screenshot set {group.Locale} / {group.DisplayType}");
 
-            return response.Data?.Id;
+            return (string?)response["data"]?["id"];
         }
         catch (Exception ex)
         {
@@ -389,7 +373,6 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
 
     private async Task<(int uploaded, int deleted, int failed)> ApplyAsync(List<UploadGroup> groups, bool keep, bool verbose)
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         using var throttle = new SemaphoreSlim(MaxParallelSets);
 
         var uploaded = 0;
@@ -415,7 +398,7 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
                     {
                         try
                         {
-                            await new AppScreenshotsApi(Service).AppScreenshotsDeleteInstanceAsync(id);
+                            await Http.DeleteAsync($"/v1/appScreenshots/{id}");
                             Interlocked.Increment(ref deleted);
                         }
                         catch (Exception ex)
@@ -430,7 +413,7 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
                 {
                     try
                     {
-                        await UploadAsync(http, group, file, verbose);
+                        await UploadAsync(group, file, verbose);
                         Interlocked.Increment(ref uploaded);
                     }
                     catch (Exception ex)
@@ -454,46 +437,45 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
     }
 
     /// <summary>reserve the asset, PUT every chunk apple asks for, then commit it with the checksum</summary>
-    private async Task UploadAsync(HttpClient http, UploadGroup group, LocalScreenshot file, bool verbose)
+    private async Task UploadAsync(UploadGroup group, LocalScreenshot file, bool verbose)
     {
         var setId = group.SetId ?? throw new InvalidOperationException("the screenshot set was not resolved.");
 
         var bytes = await File.ReadAllBytesAsync(file.Path);
-        var screenshotsApi = new AppScreenshotsApi(Service);
 
-        var createRequest = new AppScreenshotCreateRequest(
-            new AppScreenshotCreateRequestData(
-                AppScreenshotCreateRequestData.TypeEnum.AppScreenshots,
-                new AppClipAdvancedExperienceImageCreateRequestDataAttributes(bytes.Length, file.FileName),
-                new AppScreenshotCreateRequestDataRelationships(
-                    new AppScreenshotCreateRequestDataRelationshipsAppScreenshotSet(
-                        new AppCustomProductPageLocalizationRelationshipsAppScreenshotSetsDataInner(
-                            AppCustomProductPageLocalizationRelationshipsAppScreenshotSetsDataInner.TypeEnum.AppScreenshotSets,
-                            setId
-                        )
-                    )
-                )
-            )
+        var createBody = AscHttp.Body(
+            "appScreenshots",
+            new JsonObject
+            {
+                ["appScreenshotSet"] = AscHttp.Link("appScreenshotSets", setId),
+            },
+            new JsonObject
+            {
+                ["fileSize"] = bytes.Length,
+                ["fileName"] = file.FileName,
+            }
         );
 
-        var created = await screenshotsApi.AppScreenshotsCreateInstanceAsync(createRequest);
+        var created = await Http.PostAsync("/v1/appScreenshots", createBody);
 
-        var screenshotId = created.Data?.Id;
+        var screenshotId = (string?)created["data"]?["id"];
         if (string.IsNullOrEmpty(screenshotId))
             throw new InvalidOperationException("App Store Connect did not return a screenshot id.");
 
-        var chunks = await MediaUpload.SendAllChunksAsync(http, created.Data?.Attributes?.UploadOperations, bytes);
+        var chunks = await AscUpload.SendAllChunksAsync(created["data"]?["attributes"]?["uploadOperations"], bytes);
 
-        var checksum = MediaUpload.Checksum(bytes);
+        var checksum = AscUpload.Checksum(bytes);
 
-        await screenshotsApi.AppScreenshotsUpdateInstanceAsync(
-            screenshotId,
-            new AppScreenshotUpdateRequest(
-                new AppScreenshotUpdateRequestData(
-                    AppScreenshotUpdateRequestData.TypeEnum.AppScreenshots,
-                    screenshotId,
-                    new AppClipAdvancedExperienceImageUpdateRequestDataAttributes(checksum, uploaded: true)
-                )
+        await Http.PatchAsync(
+            $"/v1/appScreenshots/{screenshotId}",
+            AscHttp.BodyWithAttributes(
+                "appScreenshots",
+                screenshotId,
+                new JsonObject
+                {
+                    ["sourceFileChecksum"] = checksum,
+                    ["uploaded"] = true,
+                }
             )
         );
 
@@ -502,16 +484,10 @@ public class Command_ImportScreenshots : AppScreenshotsCommandBase
     }
 
     /// <summary>the inverse of <see cref="AppScreenshotsCommandBase.DisplayTypeName"/></summary>
-    private static ScreenshotDisplayType? ParseDisplayType(string name)
+    private static string? ParseDisplayType(string name)
     {
-        try
-        {
-            return JsonConvert.DeserializeObject<ScreenshotDisplayType>($"\"{name.ToUpperInvariant()}\"");
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        var upper = name.ToUpperInvariant();
+        return KnownDisplayTypes.FirstOrDefault(t => t == upper);
     }
 
     /// <summary>an explicit argument wins, then the export folder next to config.json, then the desktop</summary>

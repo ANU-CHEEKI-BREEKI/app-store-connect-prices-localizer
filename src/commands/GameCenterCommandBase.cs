@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Shared plumbing for the subcommands that touch Game Center achievements.
@@ -11,29 +10,63 @@ using AppStoreConnect.Net.Model;
 /// </summary>
 public abstract class GameCenterCommandBase : LocalesCommandBase
 {
+    /// <summary>the attributes of one achievement language, read straight off its node</summary>
+    public class LocalizationAttributes
+    {
+        private readonly JsonNode _node;
+
+        public LocalizationAttributes(JsonNode node)
+            => _node = node;
+
+        public string? Locale => (string?)_node["attributes"]?["locale"];
+        public string? Name => (string?)_node["attributes"]?["name"];
+        public string? BeforeEarnedDescription => (string?)_node["attributes"]?["beforeEarnedDescription"];
+        public string? AfterEarnedDescription => (string?)_node["attributes"]?["afterEarnedDescription"];
+    }
+
+    /// <summary>one language of an achievement: the raw node behind the fields everything reads</summary>
+    public class Localization
+    {
+        public JsonNode Node { get; }
+
+        public Localization(JsonNode node)
+        {
+            Node = node;
+            Attributes = new LocalizationAttributes(node);
+        }
+
+        public string Id => (string?)Node["id"] ?? "";
+
+        public LocalizationAttributes? Attributes { get; }
+    }
+
     /// <summary>an achievement and every language it has, in one object</summary>
     public class Achievement
     {
-        public GameCenterAchievement Data { get; set; } = null!;
-        public List<GameCenterAchievementLocalization> Localizations { get; set; } = new();
+        /// <summary>the raw achievement resource, as App Store Connect sent it</summary>
+        public JsonNode Data { get; set; } = null!;
 
-        /// <summary>localization id -> its image, for the languages that have one</summary>
-        public Dictionary<string, GameCenterAchievementImage> Images { get; set; } = new(StringComparer.Ordinal);
+        public List<Localization> Localizations { get; set; } = new();
+
+        /// <summary>localization id -> its image node, for the languages that have one</summary>
+        public Dictionary<string, JsonNode> Images { get; set; } = new(StringComparer.Ordinal);
+
+        public string Id => (string?)Data["id"] ?? "";
 
         /// <summary>the id you typed when you created it, and the key of its csv rows</summary>
-        public string VendorIdentifier => Data.Attributes?.VendorIdentifier ?? "";
+        public string VendorIdentifier => (string?)Data["attributes"]?["vendorIdentifier"] ?? "";
 
-        public string ReferenceName => Data.Attributes?.ReferenceName ?? "";
+        public string ReferenceName => (string?)Data["attributes"]?["referenceName"] ?? "";
 
         public List<string> Locales => Localizations
             .Select(l => l.Attributes?.Locale ?? "")
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToList();
 
-        public GameCenterAchievementLocalization? Find(string locale)
+        public Localization? Find(string locale)
             => Localizations.FirstOrDefault(l => string.Equals(l.Attributes?.Locale, locale, StringComparison.OrdinalIgnoreCase));
 
-        public GameCenterAchievementImage? ImageOf(GameCenterAchievementLocalization localization)
+        public JsonNode? ImageOf(Localization localization)
             => Images.TryGetValue(localization.Id, out var image) ? image : null;
     }
 
@@ -54,14 +87,14 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
 
         Console.WriteLine("   -> Receiving Game Center details...");
 
-        GameCenterDetail? detail;
+        JsonNode? detail;
 
         try
         {
-            var response = await new AppsApi(Service).AppsGameCenterDetailGetToOneRelatedAsync(Config.AppId);
-            detail = response?.Data;
+            var response = await Http.GetAsync($"/v1/apps/{Config.AppId}/gameCenterDetail");
+            detail = response["data"];
         }
-        catch (AppStoreConnect.Net.Client.ApiException ex) when (ex.ErrorCode == 404)
+        catch (AscApiException ex) when (ex.StatusCode == 404)
         {
             detail = null;
         }
@@ -73,20 +106,21 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
             return null;
         }
 
-        GameCenterDetailId = detail.Id;
+        GameCenterDetailId = (string?)detail["id"];
 
-        var groupId = detail.Relationships?.GameCenterGroup?.Data?.Id;
+        var groupId = (string?)detail["relationships"]?["gameCenterGroup"]?["data"]?["id"];
 
-        var achievements = string.IsNullOrWhiteSpace(groupId)
-            ? await FetchAchievementsAsync(api => api.GameCenterDetailsGameCenterAchievementsGetToManyRelatedAsync(detail.Id, limit: 200), verbose)
-            : await FetchGroupAchievementsAsync(groupId, verbose);
+        var page = string.IsNullOrWhiteSpace(groupId)
+            ? await Http.GetPagedAsync($"/v1/gameCenterDetails/{GameCenterDetailId}/gameCenterAchievements?limit=200")
+            : await Http.GetPagedAsync($"/v1/gameCenterGroups/{groupId}/gameCenterAchievements?limit=200");
 
         if (!string.IsNullOrWhiteSpace(groupId))
             Console.WriteLine($"   -> this app is in a Game Center group, its achievements are shared.");
 
-        achievements = achievements
-            .Where(a => !string.IsNullOrWhiteSpace(a.Attributes?.VendorIdentifier))
-            .OrderBy(a => a.Attributes?.ReferenceName, StringComparer.OrdinalIgnoreCase)
+        var achievements = page.Data
+            .OfType<JsonNode>()
+            .Where(a => !string.IsNullOrWhiteSpace((string?)a["attributes"]?["vendorIdentifier"]))
+            .OrderBy(a => (string?)a["attributes"]?["referenceName"], StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         Console.WriteLine($"   -> {achievements.Count} achievement(s), receiving their languages...");
@@ -103,53 +137,24 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
         return result;
     }
 
-    private async Task<List<GameCenterAchievement>> FetchAchievementsAsync(
-        Func<GameCenterDetailsApi, Task<GameCenterAchievementsResponse>> fetch, bool verbose)
-    {
-        var api = new GameCenterDetailsApi(Service);
-
-        return await FetchAllPagesAsync<GameCenterAchievementsResponse, GameCenterAchievement>(
-            api.AsynchronousClient,
-            api.Configuration,
-            () => fetch(api),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
-    }
-
-    private async Task<List<GameCenterAchievement>> FetchGroupAchievementsAsync(string groupId, bool verbose)
-    {
-        var api = new GameCenterGroupsApi(Service);
-
-        return await FetchAllPagesAsync<GameCenterAchievementsResponse, GameCenterAchievement>(
-            api.AsynchronousClient,
-            api.Configuration,
-            () => api.GameCenterGroupsGameCenterAchievementsGetToManyRelatedAsync(groupId, limit: 200),
-            r => r.Data,
-            r => r.Links?.Next,
-            verbose
-        );
-    }
-
     /// <summary>
     /// the languages of one achievement, and the image of each. The image rides along in the same
     /// request: a localization without one can never go live, so it is never just extra data
     /// </summary>
     protected async Task LoadLocalizationsAsync(Achievement achievement, bool verbose)
     {
-        var api = new GameCenterAchievementsApi(Service);
-
         try
         {
-            var response = await api.GameCenterAchievementsLocalizationsGetToManyRelatedAsync(
-                achievement.Data.Id,
-                limit: 200,
-                include: new List<string> { "gameCenterAchievementImage" }
+            var response = await Http.GetAsync(
+                $"/v1/gameCenterAchievements/{achievement.Id}/localizations?limit=200&include=gameCenterAchievementImage"
             );
 
-            achievement.Localizations = response?.Data ?? new();
-            achievement.Images = MapImages(achievement.Localizations, response?.Included);
+            achievement.Localizations = (response["data"] as JsonArray ?? new JsonArray())
+                .OfType<JsonNode>()
+                .Select(n => new Localization(n))
+                .ToList();
+
+            achievement.Images = MapImages(achievement.Localizations, response["included"] as JsonArray);
 
             if (verbose)
                 Console.WriteLine($"      {achievement.VendorIdentifier,-32} {achievement.Localizations.Count} language(s), {achievement.Images.Count} image(s)");
@@ -166,21 +171,19 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
     /// 'included' is a flat list, so an image is tied back to its language through the relationship
     /// the localization carries. Doing it the other way around would need one request per language
     /// </summary>
-    private static Dictionary<string, GameCenterAchievementImage> MapImages(
-        List<GameCenterAchievementLocalization> localizations,
-        List<GameCenterAchievementLocalizationsResponseIncludedInner>? included)
+    private static Dictionary<string, JsonNode> MapImages(List<Localization> localizations, JsonArray? included)
     {
-        var images = (included ?? new())
-            .Select(i => i.ActualInstance)
-            .OfType<GameCenterAchievementImage>()
-            .Where(i => !string.IsNullOrWhiteSpace(i.Id))
-            .ToDictionary(i => i.Id, StringComparer.Ordinal);
+        var images = (included ?? new JsonArray())
+            .OfType<JsonNode>()
+            .Where(i => (string?)i["type"] == "gameCenterAchievementImages")
+            .Where(i => !string.IsNullOrWhiteSpace((string?)i["id"]))
+            .ToDictionary(i => (string)i["id"]!, StringComparer.Ordinal);
 
-        var result = new Dictionary<string, GameCenterAchievementImage>(StringComparer.Ordinal);
+        var result = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
 
         foreach (var localization in localizations)
         {
-            var imageId = localization.Relationships?.GameCenterAchievementImage?.Data?.Id;
+            var imageId = (string?)localization.Node["relationships"]?["gameCenterAchievementImage"]?["data"]?["id"];
 
             if (!string.IsNullOrWhiteSpace(imageId) && images.TryGetValue(imageId, out var image))
                 result[localization.Id] = image;
@@ -193,7 +196,7 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
     /// The language to copy an image from: the one configured as default, or the first that has an
     /// image at all. An achievement whose primary language has no image yet cannot seed anything.
     /// </summary>
-    protected GameCenterAchievementLocalization? FindImageSource(Achievement achievement)
+    protected Localization? FindImageSource(Achievement achievement)
     {
         var primary = string.IsNullOrWhiteSpace(Config.DefaultLocale) ? "en-US" : Config.DefaultLocale;
 
@@ -212,48 +215,38 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
     /// the bytes really do have to make the round trip.
     /// </summary>
     protected async Task<bool> CopyImageAsync(
-        HttpClient http,
         Achievement achievement,
-        GameCenterAchievementLocalization target,
+        Localization target,
         byte[] bytes,
         string fileName,
         bool verbose)
     {
-        var api = new GameCenterAchievementImagesApi(Service);
-
-        var createRequest = new GameCenterAchievementImageCreateRequest(
-            new GameCenterAchievementImageCreateRequestData(
-                GameCenterAchievementImageCreateRequestData.TypeEnum.GameCenterAchievementImages,
-                new AppClipAdvancedExperienceImageCreateRequestDataAttributes(bytes.Length, fileName),
-                new GameCenterAchievementImageCreateRequestDataRelationships(
-                    new GameCenterAchievementImageCreateRequestDataRelationshipsGameCenterAchievementLocalization(
-                        new GameCenterAchievementImageRelationshipsGameCenterAchievementLocalizationData(
-                            GameCenterAchievementImageRelationshipsGameCenterAchievementLocalizationData.TypeEnum.GameCenterAchievementLocalizations,
-                            target.Id
-                        )
-                    )
-                )
+        var created = await Http.PostAsync(
+            "/v1/gameCenterAchievementImages",
+            AscHttp.Body(
+                "gameCenterAchievementImages",
+                new JsonObject
+                {
+                    ["gameCenterAchievementLocalization"] = AscHttp.Link("gameCenterAchievementLocalizations", target.Id),
+                },
+                new JsonObject
+                {
+                    ["fileSize"] = bytes.Length,
+                    ["fileName"] = fileName,
+                }
             )
         );
 
-        var created = await api.GameCenterAchievementImagesCreateInstanceAsync(createRequest);
-
-        var imageId = created?.Data?.Id;
+        var imageId = (string?)created["data"]?["id"];
         if (string.IsNullOrEmpty(imageId))
             throw new InvalidOperationException("App Store Connect did not return an image id.");
 
-        var chunks = await MediaUpload.SendAllChunksAsync(http, created?.Data?.Attributes?.UploadOperations, bytes);
+        var chunks = await AscUpload.SendAllChunksAsync(created["data"]?["attributes"]?["uploadOperations"], bytes);
 
-        await api.GameCenterAchievementImagesUpdateInstanceAsync(
-            imageId,
-            new GameCenterAchievementImageUpdateRequest(
-                new GameCenterAchievementImageUpdateRequestData(
-                    GameCenterAchievementImageUpdateRequestData.TypeEnum.GameCenterAchievementImages,
-                    imageId,
-                    // unlike a screenshot, a game center image is committed with the flag alone
-                    new AppEventScreenshotUpdateRequestDataAttributes(uploaded: true)
-                )
-            )
+        // unlike a screenshot, a game center image is committed with the flag alone
+        await Http.PatchAsync(
+            $"/v1/gameCenterAchievementImages/{imageId}",
+            AscHttp.BodyWithAttributes("gameCenterAchievementImages", imageId, new JsonObject { ["uploaded"] = true })
         );
 
         if (verbose)
@@ -263,14 +256,16 @@ public abstract class GameCenterCommandBase : LocalesCommandBase
     }
 
     /// <summary>the bytes behind an already uploaded image, or null when it is not downloadable yet</summary>
-    protected static async Task<(byte[] Bytes, string FileName)?> DownloadImageAsync(HttpClient http, GameCenterAchievementImage image)
+    protected static async Task<(byte[] Bytes, string FileName)?> DownloadImageAsync(HttpClient http, JsonNode image)
     {
-        var url = MediaUpload.DownloadUrl(image.Attributes?.ImageAsset);
+        var url = AscUpload.DownloadUrl(image["attributes"]?["imageAsset"]);
         if (url is null)
             return null;
 
         var bytes = await http.GetByteArrayAsync(url);
-        var fileName = string.IsNullOrWhiteSpace(image.Attributes?.FileName) ? "achievement.png" : image.Attributes.FileName;
+
+        var name = (string?)image["attributes"]?["fileName"];
+        var fileName = string.IsNullOrWhiteSpace(name) ? "achievement.png" : name;
 
         return (bytes, fileName);
     }

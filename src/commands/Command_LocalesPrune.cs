@@ -1,4 +1,4 @@
-using AppStoreConnect.Net.Api;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Deletes localizations, keeping only the languages you name.
@@ -102,7 +102,7 @@ public class Command_LocalesPrune : GameCenterCommandBase
         foreach (var product in products)
         {
             var kept = product.Localizations
-                .Where(l => keep.Contains(l.Attributes?.Locale ?? "", StringComparer.OrdinalIgnoreCase))
+                .Where(l => keep.Contains((string?)l?["attributes"]?["locale"] ?? "", StringComparer.OrdinalIgnoreCase))
                 .ToList();
 
             // deleting every localization of a product is not something App Store Connect allows,
@@ -114,7 +114,7 @@ public class Command_LocalesPrune : GameCenterCommandBase
             }
 
             foreach (var localization in product.Localizations.Except(kept))
-                doomed.Add(new Doomed(product.ProductId, localization.Attributes?.Locale ?? "?", localization.Id));
+                doomed.Add(new Doomed(product.ProductId, (string?)localization?["attributes"]?["locale"] ?? "?", (string?)localization?["id"] ?? ""));
         }
 
         PrintPlan(doomed, refused, "product");
@@ -122,8 +122,7 @@ public class Command_LocalesPrune : GameCenterCommandBase
         if (!confirm || doomed.Count == 0)
             return;
 
-        var api = new InAppPurchaseLocalizationsApi(Service);
-        await DeleteAllAsync(doomed, id => api.InAppPurchaseLocalizationsDeleteInstanceAsync(id));
+        await DeleteAllAsync(doomed, id => Http.DeleteAsync($"/v1/inAppPurchaseLocalizations/{id}"));
     }
 
     private async Task PruneAchievementsAsync(List<string> keep, bool confirm)
@@ -135,13 +134,15 @@ public class Command_LocalesPrune : GameCenterCommandBase
         if (achievements is null)
             return;
 
+        // 'Id' holds the achievement id at this point: only the plan needs the locales, and the
+        // localization ids are looked up right before anything is actually deleted
         var doomed = new List<Doomed>();
         var refused = new List<string>();
 
         foreach (var achievement in achievements)
         {
-            var kept = achievement.Localizations
-                .Where(l => keep.Contains(l.Attributes?.Locale ?? "", StringComparer.OrdinalIgnoreCase))
+            var kept = achievement.Locales
+                .Where(l => keep.Contains(l, StringComparer.OrdinalIgnoreCase))
                 .ToList();
 
             if (kept.Count == 0)
@@ -150,8 +151,8 @@ public class Command_LocalesPrune : GameCenterCommandBase
                 continue;
             }
 
-            foreach (var localization in achievement.Localizations.Except(kept))
-                doomed.Add(new Doomed(achievement.VendorIdentifier, localization.Attributes?.Locale ?? "?", localization.Id));
+            foreach (var locale in achievement.Locales.Except(kept))
+                doomed.Add(new Doomed(achievement.VendorIdentifier, locale, achievement.Id));
         }
 
         PrintPlan(doomed, refused, "achievement");
@@ -159,8 +160,39 @@ public class Command_LocalesPrune : GameCenterCommandBase
         if (!confirm || doomed.Count == 0)
             return;
 
-        var api = new GameCenterAchievementLocalizationsApi(Service);
-        await DeleteAllAsync(doomed, id => api.GameCenterAchievementLocalizationsDeleteInstanceAsync(id));
+        doomed = await ResolveLocalizationIdsAsync(doomed);
+
+        await DeleteAllAsync(doomed, id => Http.DeleteAsync($"/v1/gameCenterAchievementLocalizations/{id}"));
+    }
+
+    /// <summary>
+    /// swaps the achievement id each doomed entry carries for the id of the localization to delete.
+    /// One that cannot be found is left as it is, so the delete reports it instead of hiding it
+    /// </summary>
+    private async Task<List<Doomed>> ResolveLocalizationIdsAsync(List<Doomed> doomed)
+    {
+        var result = new List<Doomed>();
+
+        foreach (var achievement in doomed.GroupBy(d => d.Id, StringComparer.Ordinal))
+        {
+            var response = await Http.GetAsync($"/v1/gameCenterAchievements/{achievement.Key}/localizations?limit=200");
+
+            var byLocale = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var localization in response["data"] as JsonArray ?? new JsonArray())
+            {
+                var locale = (string?)localization?["attributes"]?["locale"];
+                var id = (string?)localization?["id"];
+
+                if (!string.IsNullOrWhiteSpace(locale) && !string.IsNullOrWhiteSpace(id))
+                    byLocale[locale] = id;
+            }
+
+            foreach (var item in achievement)
+                result.Add(byLocale.TryGetValue(item.Locale, out var id) ? item with { Id = id } : item);
+        }
+
+        return result;
     }
 
     /// <summary>

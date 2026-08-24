@@ -1,5 +1,4 @@
-using AppStoreConnect.Net.Api;
-using AppStoreConnect.Net.Model;
+using System.Text.Json.Nodes;
 
 /// <summary>
 /// Copies the Privacy Policy, Support and Marketing url from one language onto all the others.
@@ -85,9 +84,9 @@ public class Command_CopyUrls : AppMetadataCommandBase
 
             var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
-                [PrivacyField] = sourceInfo?.Attributes?.PrivacyPolicyUrl,
-                [SupportField] = sourceVersion?.Attributes?.SupportUrl,
-                [MarketingField] = sourceVersion?.Attributes?.MarketingUrl,
+                [PrivacyField] = (string?)sourceInfo?["attributes"]?["privacyPolicyUrl"],
+                [SupportField] = (string?)sourceVersion?["attributes"]?["supportUrl"],
+                [MarketingField] = (string?)sourceVersion?["attributes"]?["marketingUrl"],
             };
 
             Console.WriteLine($"   -> source locale {source}");
@@ -183,13 +182,13 @@ public class Command_CopyUrls : AppMetadataCommandBase
         string? marketing = null;
 
         if (fields.Contains(PrivacyField) && info is not null)
-            Decide(PrivacyField, info.Attributes?.PrivacyPolicyUrl, ref privacy);
+            Decide(PrivacyField, (string?)info["attributes"]?["privacyPolicyUrl"], ref privacy);
 
         if (fields.Contains(SupportField) && version is not null)
-            Decide(SupportField, version.Attributes?.SupportUrl, ref support);
+            Decide(SupportField, (string?)version["attributes"]?["supportUrl"], ref support);
 
         if (fields.Contains(MarketingField) && version is not null)
-            Decide(MarketingField, version.Attributes?.MarketingUrl, ref marketing);
+            Decide(MarketingField, (string?)version["attributes"]?["marketingUrl"], ref marketing);
 
         if (set.Count == 0)
         {
@@ -223,23 +222,20 @@ public class Command_CopyUrls : AppMetadataCommandBase
         {
             try
             {
-                // the generated client serializes nulls and App Store Connect reads an explicit null
+                // nulls are serialized and App Store Connect reads an explicit null
                 // as "clear this field", so everything else on the page is resent as it is
-                await new AppInfoLocalizationsApi(Service).AppInfoLocalizationsUpdateInstanceAsync(
-                    info.Id,
-                    new AppInfoLocalizationUpdateRequest(
-                        new AppInfoLocalizationUpdateRequestData(
-                            AppInfoLocalizationUpdateRequestData.TypeEnum.AppInfoLocalizations,
-                            info.Id,
-                            new AppInfoLocalizationUpdateRequestDataAttributes(
-                                name: info.Attributes?.Name,
-                                subtitle: info.Attributes?.Subtitle,
-                                privacyPolicyUrl: privacy,
-                                privacyChoicesUrl: info.Attributes?.PrivacyChoicesUrl,
-                                privacyPolicyText: info.Attributes?.PrivacyPolicyText
-                            )
-                        )
-                    )
+                var infoId = (string?)info["id"] ?? "";
+
+                await Http.PatchAsync(
+                    $"/v1/appInfoLocalizations/{infoId}",
+                    AscHttp.BodyWithAttributes("appInfoLocalizations", infoId, new JsonObject
+                    {
+                        ["name"] = (string?)info["attributes"]?["name"],
+                        ["subtitle"] = (string?)info["attributes"]?["subtitle"],
+                        ["privacyPolicyUrl"] = privacy,
+                        ["privacyChoicesUrl"] = (string?)info["attributes"]?["privacyChoicesUrl"],
+                        ["privacyPolicyText"] = (string?)info["attributes"]?["privacyPolicyText"],
+                    })
                 );
 
                 updated.Add($"{locale} {PrivacyField}");
@@ -255,22 +251,19 @@ public class Command_CopyUrls : AppMetadataCommandBase
         {
             try
             {
-                await new AppStoreVersionLocalizationsApi(Service).AppStoreVersionLocalizationsUpdateInstanceAsync(
-                    version.Id,
-                    new AppStoreVersionLocalizationUpdateRequest(
-                        new AppStoreVersionLocalizationUpdateRequestData(
-                            AppStoreVersionLocalizationUpdateRequestData.TypeEnum.AppStoreVersionLocalizations,
-                            version.Id,
-                            new AppStoreVersionLocalizationUpdateRequestDataAttributes(
-                                description: version.Attributes?.Description,
-                                keywords: version.Attributes?.Keywords,
-                                marketingUrl: marketing ?? version.Attributes?.MarketingUrl,
-                                promotionalText: version.Attributes?.PromotionalText,
-                                supportUrl: support ?? version.Attributes?.SupportUrl,
-                                whatsNew: version.Attributes?.WhatsNew
-                            )
-                        )
-                    )
+                var versionId = (string?)version["id"] ?? "";
+
+                await Http.PatchAsync(
+                    $"/v1/appStoreVersionLocalizations/{versionId}",
+                    AscHttp.BodyWithAttributes("appStoreVersionLocalizations", versionId, new JsonObject
+                    {
+                        ["description"] = (string?)version["attributes"]?["description"],
+                        ["keywords"] = (string?)version["attributes"]?["keywords"],
+                        ["marketingUrl"] = marketing ?? (string?)version["attributes"]?["marketingUrl"],
+                        ["promotionalText"] = (string?)version["attributes"]?["promotionalText"],
+                        ["supportUrl"] = support ?? (string?)version["attributes"]?["supportUrl"],
+                        ["whatsNew"] = (string?)version["attributes"]?["whatsNew"],
+                    })
                 );
 
                 if (support is not null) updated.Add($"{locale} {SupportField}");
