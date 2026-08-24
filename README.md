@@ -33,7 +33,6 @@ Also you can provide some comand parameters each time calling `localize`, or set
         "PrivateKeyFilePath": "../../AuthKey_XYZ123ABC.p8",
 
         "AppId": "1234567890", // your app AppleId from App Store Connect App info page
-        "DefaultPricesFilePath": "./default-prices.json",
         "LocalizedPricesTemplateFilePath": "",
         "ProductDefinitionsFilePath": "./product-definitions.csv",
         "AppMetadataFilePath": "",
@@ -48,13 +47,9 @@ Also you can provide some comand parameters each time calling `localize`, or set
 
 all paths in config are relative to config.json location
 
-there are example of `../default-prices.json`
-
-    {
-        "crystals_1": "1",
-        "crystals_6": "100",
-        "disable_ads": "10",
-    }
+base prices come from the `default_price` column of `product-definitions.csv` - the same file
+`export-iaps` writes and `create-iaps` reads, so every command shares one source of prices.
+No csv yet? Run `export-iaps` once and it is created from what the store has now.
 
 you can define rounded prices, the program will subtract 0.01 from them automatically
 
@@ -81,8 +76,8 @@ In the file `./configs/localized-prices-template.json`, there are multipliers fo
         //...
     }
 
-- The program retrieves a list of all IAPs using the [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi), and set base prices provided in `../default-prices.json` (you need to create it yourself)
-This will reset their prices to the default price (just like you can do manually in the App Store Connect by clicking on "Edit").
+- The program retrieves a list of all IAPs using the [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi), and takes each product's base price from the `default_price` column of `product-definitions.csv` (run `export-iaps` once to create it).
+This is the price you can also set manually in the App Store Connect by clicking on "Edit".
 - Then, the program multiplies the local prices by the corresponding multipliers from the `localized-prices-template.json` file.
 - Then, 0.01 is subtracted from the price to make round prices like `10$` become `9.99$`.
 - Since Apple des not allow to set any price you want, program vill search closest available price point in the list provided by [App Store Connect API](https://developer.apple.com/documentation/appstoreconnectapi)
@@ -152,7 +147,7 @@ profile, and finally `../config.json`.
 - 
 
 
-    localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]
+    localize [--products <path-to-product-definitions.csv>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]
 
 
     description:
@@ -160,8 +155,9 @@ profile, and finally `../config.json`.
             provided in your JSON config and localized prices template.
 
     options:
-    --prices <path>              Specifies path to json with default prices in default currency. If not
-                                specified, used path from global config json.
+    --products <path>            Specifies path to the product definitions csv the base prices are read
+                                from. If not specified, used path from global config json
+                                ('ProductDefinitionsFilePath').
     --localized-template <path>  Specifies path to json with percentages for each region that needs to
                                 be localized. Default path is:
                                 ./configs/localized-prices-template.json
@@ -175,7 +171,7 @@ profile, and finally `../config.json`.
   
 - 
 
-    restore [--prices <path-to-default-prices.json>] [-v] [-l]
+    restore [--products <path-to-product-definitions.csv>] [-v] [-l]
 
 
     description:

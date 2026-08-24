@@ -21,11 +21,11 @@ public class PricePerTerritory : Dictionary<string, double> { }
 public class Command_Restore : CommandBase
 {
     public override string Name => "restore";
-    public override string Description => "Recalculates prices for all regions based on the default currency price provided in your JSON config.";
+    public override string Description => "Recalculates prices for all regions based on the default_price column of the product definitions csv.";
 
     public override void PrintHelp()
     {
-        Console.WriteLine("restore [--prices <path-to-default-prices.json>] [--iap <id[,id...]>] [-v] [-l]");
+        Console.WriteLine("restore [--products <path-to-product-definitions.csv>] [--iap <id[,id...]>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -35,6 +35,10 @@ public class Command_Restore : CommandBase
         Console.WriteLine();
         Console.WriteLine("options:");
 
+        CommandLinesUtils.PrintOption(
+            "--products <path>",
+            "Specifies path to the product definitions csv the base prices are read from. If not specified, used path from global config json ('ProductDefinitionsFilePath')."
+        );
         CommandLinesUtils.PrintOption(
             CommandLinesUtils.IapOptionName,
             CommandLinesUtils.IapOptionDescription
@@ -51,7 +55,8 @@ public class Command_Restore : CommandBase
 
     protected override async Task InternalExecuteAsync()
     {
-        await RestorePrices();
+        if (!await RestorePrices())
+            return;
 
         // print what we set at the end
         var listCommand = new Command_List();
@@ -62,9 +67,11 @@ public class Command_Restore : CommandBase
     /// <summary>
     /// set default prices
     /// </summary>
-    private async Task RestorePrices()
+    private async Task<bool> RestorePrices()
     {
-        var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, "../default-prices-usd.json", Args.HasFlag("-v")) ?? new();
+        var basePrices = await CommandLinesUtils.LoadBasePrices(Config.ProductDefinitionsFilePath, Args.HasFlag("-v"));
+        if (basePrices is null)
+            return false;
 
         var verbose = Args.HasFlag("-v");
         try
@@ -104,6 +111,8 @@ public class Command_Restore : CommandBase
         {
             Console.WriteLine(ex);
         }
+
+        return true;
     }
 
     /// <summary>

@@ -11,7 +11,9 @@ public class Command_Localize : CommandBase
 
             var appId = Config.AppId;
             var baseTerritory = Config.DefaultRegion;
-            var basePrices = await CommandLinesUtils.LoadJson<ProductConfigs>(Config.DefaultPricesFilePath, "../default-prices-usd.json", Args.HasFlag("-v")) ?? new();
+            var basePrices = await CommandLinesUtils.LoadBasePrices(Config.ProductDefinitionsFilePath, Args.HasFlag("-v"));
+            if (basePrices is null)
+                return;
             var localPercentages = await CommandLinesUtils.LoadJson<LocalizedPricesPercentagesConfigs>(Config.LocalizedPricesTemplateFilePath, "./configs/localized-prices-template.json", Args.HasFlag("-v")) ?? new();
 
             // no restore pre-step: the base price comes straight from the json config, so
@@ -104,7 +106,7 @@ public class Command_Localize : CommandBase
 
         if (!basePrices.TryGetValue(productId, out var configuredPrice))
         {
-            Console.WriteLine($"[SKIP] {productId}: not in the default prices json, nothing to localize from.");
+            Console.WriteLine($"[SKIP] {productId}: no default_price in the product definitions csv, nothing to localize from.");
             return;
         }
 
@@ -194,11 +196,11 @@ public class Command_Localize : CommandBase
     }
 
     public override string Name => "localize";
-    public override string Description => "Recalculates prices for all regions based on the default currency price provided in your JSON config and localized prices template.";
+    public override string Description => "Recalculates prices for all regions based on the default_price column of the product definitions csv and the localized prices template.";
 
     public override void PrintHelp()
     {
-        Console.WriteLine("localize [--prices <path-to-default-prices.json>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]");
+        Console.WriteLine("localize [--products <path-to-product-definitions.csv>] [--localized-template <path-to-localized-template.json>] [--iap <id[,id...]>] [--parallel <n>] [-v] [-l]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -209,8 +211,8 @@ public class Command_Localize : CommandBase
         Console.WriteLine("options:");
 
         CommandLinesUtils.PrintOption(
-            "--prices <path>",
-            "Specifies path to json with default prices in default currency. If not specified, used path from global config json."
+            "--products <path>",
+            "Specifies path to the product definitions csv the base prices are read from. If not specified, used path from global config json ('ProductDefinitionsFilePath')."
         );
         CommandLinesUtils.PrintOption(
             "--localized-template <path>",
