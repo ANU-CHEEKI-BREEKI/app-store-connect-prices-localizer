@@ -12,6 +12,9 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
     /// <summary>how many languages get their image at the same time; App Store Connect copes with this many</summary>
     private const int ImageUploadParallelism = 8;
 
+    private readonly ProgressLine _progress = new();
+    private int _sentCount;
+
     /// <summary>"vendorId|locale|field" of every value validation rejected</summary>
     private readonly HashSet<string> _invalid = new(StringComparer.OrdinalIgnoreCase);
 
@@ -146,6 +149,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
             if (withImages)
                 await CopyImagesAsync(achievements, updated, skipped, failed);
 
+            _progress.Clear();
             PrintSummary(updated, created, skipped, failed);
 
             if (submit)
@@ -336,7 +340,10 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
                     continue;
                 }
 
-                Console.WriteLine($"      [NEW]  {group.VendorId} [{locale}] {Preview(name)}");
+                if (Verbose)
+                    Console.WriteLine($"      [NEW]  {group.VendorId} [{locale}] {Preview(name)}");
+                else
+                    _progress.Update($"      sending... {++_sentCount} change(s), last: {group.VendorId} [{locale}]");
 
                 if (DryRun)
                 {
@@ -369,7 +376,10 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
                 continue;
             }
 
-            Console.WriteLine($"      [SET]  {group.VendorId} [{locale}] {string.Join(", ", fieldsChanged)}");
+            if (Verbose)
+                Console.WriteLine($"      [SET]  {group.VendorId} [{locale}] {string.Join(", ", fieldsChanged)}");
+            else
+                _progress.Update($"      sending... {++_sentCount} change(s), last: {group.VendorId} [{locale}]");
 
             if (DryRun)
             {
@@ -464,6 +474,7 @@ public class Command_LocalesImportAchievements : GameCenterCommandBase
     /// </summary>
     private async Task CopyImagesAsync(List<Achievement> achievements, List<string> updated, List<string> skipped, List<string> failed)
     {
+        _progress.Clear();
         Console.WriteLine();
         Console.WriteLine("   -> images...");
 

@@ -8,6 +8,9 @@ using System.Text.Json.Nodes;
 /// </summary>
 public class Command_LocalesImportIaps : IapLocalesCommandBase
 {
+    private readonly ProgressLine _progress = new();
+    private int _sentCount;
+
     /// <summary>"product|locale|field" of every value validation rejected, so the send pass leaves them out</summary>
     private readonly HashSet<string> _invalid = new(StringComparer.OrdinalIgnoreCase);
 
@@ -142,6 +145,7 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
                     changedProducts.Add(group.Product);
             }
 
+            _progress.Clear();
             PrintSummary(updated, created, skipped, failed);
 
             if (submit && changedProducts.Count > 0)
@@ -334,7 +338,10 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
                     continue;
                 }
 
-                Console.WriteLine($"      [NEW]  {group.ProductId} [{locale}] {Preview(name)}");
+                if (Verbose)
+                    Console.WriteLine($"      [NEW]  {group.ProductId} [{locale}] {Preview(name)}");
+                else
+                    _progress.Update($"      sending... {++_sentCount} change(s), last: {group.ProductId} [{locale}]");
 
                 if (DryRun)
                 {
@@ -364,7 +371,10 @@ public class Command_LocalesImportIaps : IapLocalesCommandBase
                 continue;
             }
 
-            Console.WriteLine($"      [SET]  {group.ProductId} [{locale}] {string.Join(", ", fieldsChanged)}");
+            if (Verbose)
+                Console.WriteLine($"      [SET]  {group.ProductId} [{locale}] {string.Join(", ", fieldsChanged)}");
+            else
+                _progress.Update($"      sending... {++_sentCount} change(s), last: {group.ProductId} [{locale}]");
 
             if (DryRun)
             {
