@@ -49,7 +49,11 @@ public class Command_List : CommandBase
             {
                 var price = pricePoints[iap!];
 
-                stringPairs.Add(new StringPairs { A = (string?)iap?["attributes"]?["productId"] ?? "?", B = $"{(string?)price?.PricePoint?["attributes"]?["customerPrice"]} {price?.Currency}" });
+                // the territory code is printed on purpose: this row follows --region, so without
+                // it the line reads like 'the price of the product', which it is not
+                var territory = price?.TerritoryCode ?? Config.DefaultRegion;
+
+                stringPairs.Add(new StringPairs { A = (string?)iap?["attributes"]?["productId"] ?? "?", B = $"{territory} {(string?)price?.PricePoint?["attributes"]?["customerPrice"]} {price?.Currency}" });
                 // Console.WriteLine($"{price?.TerritoryCode,5} {(string?)price?.PricePoint?["attributes"]?["customerPrice"],10} {price?.Currency,5} {(string?)iap?["attributes"]?["productId"],5}");
 
                 if (printLocalPrices)
@@ -87,7 +91,7 @@ public class Command_List : CommandBase
 
     public override void PrintHelp()
     {
-        Console.WriteLine("list [-p] [-l] [--iap <id[,id...]>] [-v]");
+        Console.WriteLine("list [-p] [-l] [--region <code>] [--iap <id[,id...]>] [-v]");
         Console.WriteLine();
         Console.WriteLine();
 
@@ -103,6 +107,10 @@ public class Command_List : CommandBase
         CommandLinesUtils.PrintOption(
             "-l",
             "Include local pricing for all regions. Only if -p is specified"
+        );
+        CommandLinesUtils.PrintOption(
+            "--region <code>",
+            "Which territory the price is shown for, e.g. 'UKR'. Default is the one from the config json ('DefaultRegion'). The code is printed next to the price, so the row always says which territory it is."
         );
         CommandLinesUtils.PrintOption(
             CommandLinesUtils.IapOptionName,
