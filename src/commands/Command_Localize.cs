@@ -134,6 +134,7 @@ public class Command_Localize : CommandBase
         // point of every territory at once, already in that territory's own currency
         var multipliers = localPercentages.Values.Append(1m).Distinct().ToList();
         var byMultiplier = new Dictionary<decimal, Dictionary<string, JsonNode>>();
+        var anchorByMultiplier = new Dictionary<decimal, JsonNode>();
 
         foreach (var multiplier in multipliers)
         {
@@ -145,23 +146,10 @@ public class Command_Localize : CommandBase
             if (anchor is null)
                 continue;
 
-            var perTerritory = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
-
-            var equalizations = await Http.GetPagedAsync(
-                $"/v1/inAppPurchasePricePoints/{Uri.EscapeDataString((string)anchor["id"]!)}/equalizations?include=territory&limit=200"
-            );
-
-            foreach (var point in equalizations.Data)
-            {
-                var territoryId = (string?)point?["relationships"]?["territory"]?["data"]?["id"];
-                if (territoryId is not null)
-                    perTerritory[territoryId] = point!;
-            }
-
-            // the anchor itself is the base territory's answer; equalizations do not echo it back
-            perTerritory[baseTerritory] = anchor;
+            var perTerritory = await EqualizeAsync(anchor, baseTerritory);
 
             byMultiplier[multiplier] = perTerritory;
+            anchorByMultiplier[multiplier] = anchor;
 
             if (v)
                 Console.WriteLine($"Anchor x{multiplier}: {(string?)anchor["attributes"]?["customerPrice"]} {baseTerritory}, equalized into {perTerritory.Count} territories.");
@@ -175,6 +163,10 @@ public class Command_Localize : CommandBase
             LocalPrices = new()
         };
 
+        // territories whose equalized price came out with no cents at all, grouped by the
+        // multiplier that produced it, so one step down the ladder answers for all of them at once
+        var wholePriced = new Dictionary<decimal, List<string>>();
+
         // every territory the base equalizes into gets the point of its own multiplier
         foreach (var (territory, basePoint) in byMultiplier[1m])
         {
@@ -187,12 +179,91 @@ public class Command_Localize : CommandBase
             priceSetup.CandidatePoints[territory] = point;
             priceSetup.LocalPrices[territory] = double.Parse((string)point["attributes"]!["customerPrice"]!, CultureInfo.InvariantCulture);
 
+            // apple equalizes into whatever its own ladder holds, and for some territories that is
+            // a bare '6' next to a page full of .99 prices. The base territory is left out: it
+            // already carries the exact price the csv asked for
+            if (territory != baseTerritory
+                && Command_Restore.PriceOf(point) is decimal price
+                && price == Math.Truncate(price))
+            {
+                if (!wholePriced.TryGetValue(multiplier, out var list))
+                    wholePriced[multiplier] = list = new List<string>();
+
+                list.Add(territory);
+            }
+
             if (v)
                 Console.WriteLine($"Calculating price for {territory}: {(string?)basePoint["attributes"]?["customerPrice"],10} * {multiplier,3} = {priceSetup.LocalPrices[territory],10:##.00}");
         }
 
+        await UnroundPrices(priceSetup, grid, anchorByMultiplier, wholePriced, baseTerritory, v);
+
         lock (pricesSetup)
             pricesSetup.Add(priceSetup);
+    }
+
+    /// <summary>
+    /// apple's answer for one price point in every other territory, in that territory's own
+    /// currency. The anchor itself is not echoed back, so the base territory is added by hand
+    /// </summary>
+    private async Task<Dictionary<string, JsonNode>> EqualizeAsync(JsonNode anchor, string baseTerritory)
+    {
+        var perTerritory = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+
+        var equalizations = await Http.GetPagedAsync(
+            $"/v1/inAppPurchasePricePoints/{Uri.EscapeDataString((string)anchor["id"]!)}/equalizations?include=territory&limit=200"
+        );
+
+        foreach (var point in equalizations.Data)
+        {
+            var territoryId = (string?)point?["relationships"]?["territory"]?["data"]?["id"];
+            if (territoryId is not null)
+                perTerritory[territoryId] = point!;
+        }
+
+        // the anchor itself is the base territory's answer; equalizations do not echo it back
+        perTerritory[baseTerritory] = anchor;
+
+        return perTerritory;
+    }
+
+    /// <summary>
+    /// One try at turning a round equalized price into a marketable one. For every multiplier that
+    /// landed on a whole number somewhere, the point one step down the base grid is equalized too,
+    /// and a territory takes that lower price only when it ends in .99. Anything else - the next
+    /// point is round as well, the currency has no cents at all, the ladder has no step left -
+    /// leaves the round price exactly where it was.
+    /// </summary>
+    private async Task UnroundPrices(
+        IapPriceSetup priceSetup,
+        IReadOnlyList<JsonNode> grid,
+        Dictionary<decimal, JsonNode> anchorByMultiplier,
+        Dictionary<decimal, List<string>> wholePriced,
+        string baseTerritory,
+        bool v)
+    {
+        foreach (var (multiplier, territories) in wholePriced)
+        {
+            var below = Command_Restore.FindBelowInGrid(grid, anchorByMultiplier[multiplier]);
+            if (below is null)
+                continue;
+
+            var perTerritory = await EqualizeAsync(below, baseTerritory);
+
+            foreach (var territory in territories)
+            {
+                if (!perTerritory.TryGetValue(territory, out var point)
+                    || Command_Restore.PriceOf(point) is not decimal price
+                    || price - Math.Truncate(price) != 0.99m)
+                    continue;
+
+                if (v)
+                    Console.WriteLine($"Unrounding {territory}: {priceSetup.LocalPrices[territory]:##.00} -> {price}");
+
+                priceSetup.CandidatePoints[territory] = point;
+                priceSetup.LocalPrices[territory] = (double)price;
+            }
+        }
     }
 
     public override string Name => "localize";

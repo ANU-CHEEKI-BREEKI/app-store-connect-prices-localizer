@@ -232,6 +232,43 @@ public class Command_Restore : CommandBase
         return best;
     }
 
+    /// <summary>the customer price of a point, or null when the api sent something unparsable</summary>
+    public static decimal? PriceOf(JsonNode point)
+        => decimal.TryParse(
+            (string?)point["attributes"]?["customerPrice"],
+            NumberStyles.Any,
+            CultureInfo.InvariantCulture,
+            out var price
+        ) ? price : null;
+
+    /// <summary>
+    /// the point one step down the ladder from this one, or null when it is already the cheapest.
+    /// Apple's grids are aligned across territories, so a step taken here is the same step
+    /// everywhere the point equalizes into.
+    /// </summary>
+    public static JsonNode? FindBelowInGrid(IReadOnlyList<JsonNode> grid, JsonNode point)
+    {
+        if (PriceOf(point) is not decimal price)
+            return null;
+
+        JsonNode? best = null;
+        var bestPrice = decimal.MinValue;
+
+        foreach (var candidate in grid)
+        {
+            if (PriceOf(candidate) is not decimal candidatePrice || candidatePrice >= price)
+                continue;
+
+            if (candidatePrice > bestPrice)
+            {
+                best = candidate;
+                bestPrice = candidatePrice;
+            }
+        }
+
+        return best;
+    }
+
     public async Task<JsonNode?> GetClosestPricePointId(JsonNode iap, string territory, double targetPrice, bool verbose)
     {
         JsonNode? lastLowerPoint = null;
