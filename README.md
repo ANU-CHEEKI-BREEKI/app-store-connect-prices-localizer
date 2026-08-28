@@ -296,7 +296,7 @@ Translating the product page by hand means clicking through a language dropdown 
 
     dotnet run -- export-metadata            # App Store Connect -> AppMetadata.csv
     # ... translate the table with whatever tool you like ...
-    dotnet run -- import-metadata translated_AppMetadata.csv
+    dotnet run -- import-metadata            # AppMetadata.csv -> App Store Connect
 
 The fields covered are the localizable texts of the product page:
 

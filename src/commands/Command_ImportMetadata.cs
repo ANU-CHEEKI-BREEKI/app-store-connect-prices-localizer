@@ -2,8 +2,6 @@ using System.Text.Json.Nodes;
 
 public class Command_ImportMetadata : AppMetadataCommandBase
 {
-    public const string DefaultFileName = "translated_AppMetadata.csv";
-
     public override string Name => "import-metadata";
     public override string Description => "Fills every localizable text of the app store product page from a translations csv, for all locales present in that table.";
 
@@ -50,7 +48,7 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
         CommandLinesUtils.PrintOption(
             "<path-to-translations.csv>",
-            $"The table with translations. A directory is also accepted, then '{DefaultFileName}' is read from it."
+            $"The table with translations. A directory is also accepted, then '{Command_ExportMetadata.DefaultFileName}' is read from it."
         );
         CommandLinesUtils.PrintOption(
             "--metadata <path>",
@@ -96,7 +94,7 @@ public class Command_ImportMetadata : AppMetadataCommandBase
 
             var path = ResolveMetadataPath(
                 Args.TryGetOption("--metadata", GetPositionalPath()),
-                DefaultFileName
+                Command_ExportMetadata.DefaultFileName
             );
 
             if (!File.Exists(path))
